@@ -131,3 +131,26 @@ test("the single-file bundle works with nothing beside it", async () => {
   solorun("receive", join(solo, "s.png"), "-o", join(solo, "out.bin"), "-q");
   assert.equal(sha(await readFile(join(solo, "out.bin"))), sha(original));
 });
+
+test("the .png output is a multi-frame APNG, not a still image", async () => {
+  const src = join(dir, "anim.bin");
+  await writeFile(src, randomBytes(30_000));
+  const out = join(dir, "anim.png");
+  run("send", src, "-o", out, "--cycles", "1", "--scale", "2", "-q");
+
+  // Walk the chunks: acTL declares the animation, fcTL introduces each frame.
+  const file = await readFile(out);
+  let off = 8;
+  let acTLFrames = 0;
+  let fcTL = 0;
+  while (off + 8 <= file.length) {
+    const len = file.readUInt32BE(off);
+    const type = file.toString("ascii", off + 4, off + 8);
+    if (type === "acTL") acTLFrames = file.readUInt32BE(off + 8);
+    if (type === "fcTL") fcTL++;
+    if (type === "IEND") break;
+    off += 12 + len;
+  }
+  assert.ok(acTLFrames > 1, `expected an animation, acTL declared ${acTLFrames} frames`);
+  assert.equal(fcTL, acTLFrames, "every declared frame needs its own fcTL");
+});

@@ -22,7 +22,7 @@ Pick whichever matches your machine. All three give the same tool.
 ### 1. One file, no npm (works where npm cannot reach a registry)
 
 ```sh
-curl -LO https://github.com/jackbauertv24-droid/decimen-cli/releases/download/v1.0.3/decimen.mjs
+curl -LO https://github.com/jackbauertv24-droid/decimen-cli/releases/download/v1.0.4/decimen.mjs
 node decimen.mjs doctor
 node decimen.mjs send ./report.pdf
 ```
@@ -35,17 +35,17 @@ it cannot reach, and this route never involves npm at all.
 ### 2. Install it properly
 
 ```sh
-npm install -g https://github.com/jackbauertv24-droid/decimen-cli/releases/download/v1.0.3/decimen-cli-1.0.3.tgz
+npm install -g https://github.com/jackbauertv24-droid/decimen-cli/releases/download/v1.0.4/decimen-cli-1.0.4.tgz
 decimen doctor
 ```
 
-Also works from a tarball you already downloaded — `npm install -g ./decimen-cli-1.0.3.tgz`
+Also works from a tarball you already downloaded — `npm install -g ./decimen-cli-1.0.4.tgz`
 needs no network.
 
 ### 3. Run once without installing
 
 ```sh
-npx -y https://github.com/jackbauertv24-droid/decimen-cli/releases/download/v1.0.3/decimen-cli-1.0.3.tgz send ./report.pdf
+npx -y https://github.com/jackbauertv24-droid/decimen-cli/releases/download/v1.0.4/decimen-cli-1.0.4.tgz send ./report.pdf
 ```
 
 Under a second cold, but it does require npm to reach the network.
@@ -63,7 +63,7 @@ nothing. Use a release asset instead.
 The tarball is a plain gzipped tar. Extract it and run the bundle directly:
 
 ```sh
-tar -xzf decimen-cli-1.0.3.tgz
+tar -xzf decimen-cli-1.0.4.tgz
 node package/dist/cli.js doctor
 ```
 
@@ -76,7 +76,7 @@ through the real WASM decoder and compares SHA-256:
 ```
 $ decimen doctor
 
-  cli           1.0.3  build 4c32306 (2026-09-15)
+  cli           1.0.4  build 4c32306 (2026-09-15)
   node          v24.19.0  linux x64
   wire format   v3
   startup       62 ms from process start to here
@@ -103,7 +103,7 @@ the package, which is what the release tarball below is for.
 
 ```sh
 decimen --version
-# decimen-cli 1.0.3  build be18fbe (2026-09-15)  wire v3
+# decimen-cli 1.0.4  build be18fbe (2026-09-15)  wire v3
 ```
 
 The build hash is baked in at bundle time and names the source commit the
@@ -161,6 +161,33 @@ receive
 
 `--format zip` writes numbered PNGs instead of an APNG, which is what you want
 if you plan to feed the frames to a video encoder.
+
+## The output is one file, but it is not one picture
+
+`send` writes a single `.png`, which reads like a still image and is not. It
+is an **APNG** — an animated PNG, every frame in one container, the way a GIF
+works. A 200 KB input produces something like this:
+
+```
+acTL            304 frames, loops forever
+chunk counts    {"IHDR":1,"PLTE":1,"acTL":1,"fcTL":304,"IDAT":1,"fdAT":303,"IEND":1}
+```
+
+The `acTL` chunk declares the frame count and says loop forever; each `fcTL`
+introduces one frame. Playing the file *is* the stream — the animation runs at
+the fps you chose, and the receiver reads frames off it as they go past.
+
+**Open it in a web browser.** Browsers animate APNG. Many desktop image viewers
+render only the first frame and sit there, which transfers nothing and looks
+like the tool is broken. If you want the frames as separate files instead —
+to feed a video encoder, or to check them by hand — use `--format zip`:
+
+```sh
+decimen send ./report.pdf --format zip
+```
+
+That writes numbered PNGs, one per frame, plus a note recording the intended
+frame rate. `decimen receive` accepts either form.
 
 ## What to expect
 

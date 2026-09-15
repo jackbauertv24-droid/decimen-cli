@@ -97,6 +97,18 @@ export async function send(o: SendOptions): Promise<string> {
   const size = mib >= 1 ? `${mib.toFixed(1)} MiB` : `${(total / 1024).toFixed(1)} KiB`;
   log(`          ${result.frameCount} frames, ${result.width}x${result.height}, ${size}, ${formatDuration(playbackSeconds)} of playback`);
   log("");
+  if (o.format === "apng") {
+    // People reasonably read ".png" as "one picture". It is an animated PNG:
+    // every frame is in that one file, and a viewer that ignores the animation
+    // shows frame 1 forever, which transfers nothing.
+    log(`It is an animated PNG — all ${result.frameCount} frames are inside that one file,`);
+    log("looping forever. Open it in a web browser: many desktop image viewers show");
+    log("only the first frame, which will not transfer.");
+  } else {
+    log(`That is a ZIP of ${result.frameCount} numbered PNGs, one per frame, plus a note`);
+    log(`recording the ${o.fps} fps they are meant to be played at.`);
+  }
+  log("");
   log("Play it fullscreen and point decimen.app/receive at the screen.");
   return outPath;
 }
