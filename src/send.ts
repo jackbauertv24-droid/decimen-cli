@@ -1,10 +1,12 @@
 // Render a file as the Decimen optical stream, written out as an animation.
 import { readFile, writeFile } from "node:fs/promises";
 import { basename, extname } from "node:path";
+import { createHash } from "node:crypto";
 
 import { packFile } from "../vendor/shared/protocol.ts";
 import { DEFAULT_FRAME_BYTES } from "../vendor/shared/send-settings.ts";
 import { exportAnimation, planExport, type ExportFormat } from "../vendor/send/export.ts";
+import { blockLength } from "../vendor/shared/frame-capacity.ts";
 import type { EccLevel } from "../vendor/send/qr-frame.ts";
 import { mimeFor } from "./mime.ts";
 import { renderPlayer } from "./player.ts";
@@ -22,6 +24,28 @@ export interface SendOptions {
   grid: number;
   frameBytes: number;
   quiet: boolean;
+  /** Bytes per part; the file is split when it is larger than this. */
+  split?: number;
+}
+
+/** Zero-padded to the width of the total, so the parts sort correctly. */
+function partLabel(i: number, n: number): string {
+  const w = String(n).length;
+  return `p${String(i).padStart(w, "0")}of${String(n).padStart(w, "0")}`;
+}
+
+/**
+ * A part size whose stream plays for roughly `seconds`.
+ *
+ * Playback duration is what actually limits a transfer — nobody holds a camera
+ * at a screen for eleven minutes — so the natural way to choose a part size is
+ * to work backwards from how long one part should take.
+ */
+export function autoSplitBytes(seconds: number, frameBytes: number, fps: number, cycles: number, grid: number): number {
+  const blockLen = blockLength(frameBytes);
+  // animationFrames ≈ cycles × 2k / grid, and playback = animationFrames / fps.
+  const k = Math.max(1, Math.floor((seconds * fps * grid) / (2 * cycles)));
+  return Math.max(blockLen, k * blockLen);
 }
 
 export const SEND_DEFAULTS = {
@@ -47,6 +71,10 @@ export async function send(o: SendOptions): Promise<string> {
   const bytes = new Uint8Array(await readFile(o.input));
   const name = basename(o.input);
   const type = mimeFor(extname(o.input));
+
+  if (o.split !== undefined && bytes.length > o.split) {
+    return sendSplit(o, bytes, name, type);
+  }
 
   const packed = await packFile(name, type, bytes);
   const plan = planExport(packed.container.length, o.frameBytes, o.grid, o.cycles);
@@ -90,7 +118,7 @@ export async function send(o: SendOptions): Promise<string> {
     },
   });
   if (!result) throw new Error("export cancelled");
-  if (!o.quiet) process.stderr.write("\r");
+  if (!o.quiet) process.stderr.write("\r\u001b[2K");
 
   const apng = Buffer.concat(result.parts);
   const isHtml = o.format === "html";
@@ -136,4 +164,76 @@ export async function send(o: SendOptions): Promise<string> {
   log("");
   log("Play it fullscreen and point decimen.app/receive at the screen.");
   return outPath;
+}
+
+/**
+ * Write one stream per part.
+ *
+ * Each part is a complete, independently decodable stream carrying its own
+ * container — so its filename, media type and SHA-256 are verified on arrival
+ * exactly as an unsplit transfer would be. What ties the set together is the
+ * part name: `<file>.<runId>.pNNofMM`, where runId is the first 8 hex of the
+ * whole file's SHA-256. That makes it impossible to reassemble parts from two
+ * different sends of the same filename without noticing.
+ */
+async function sendSplit(o: SendOptions, bytes: Uint8Array, name: string, type: string): Promise<string> {
+  const log = o.quiet ? () => {} : (s: string) => console.error(s);
+  const runId = createHash("sha256").update(bytes).digest("hex").slice(0, 8);
+  const total = Math.ceil(bytes.length / o.split!);
+  const ext = o.format === "html" ? "html" : o.format === "zip" ? "zip" : "png";
+  const base = (o.out ?? `${o.input}.decimen`).replace(/\.(png|zip|html)$/i, "");
+
+  log(`file      ${name} (${type})`);
+  log(`size      ${bytes.length} B -> ${total} parts of up to ${o.split} B  [run ${runId}]`);
+  log("");
+
+  const written: string[] = [];
+  let playback = 0;
+  for (let i = 1; i <= total; i++) {
+    const chunk = bytes.subarray((i - 1) * o.split!, Math.min(i * o.split!, bytes.length));
+    const label = partLabel(i, total);
+    const packed = await packFile(`${name}.${runId}.${label}`, type, chunk);
+    const plan = planExport(packed.container.length, o.frameBytes, o.grid, o.cycles);
+    const seconds = plan.animationFrames / o.fps;
+    playback += seconds;
+
+    const result = await exportAnimation({
+      payload: packed.container,
+      frameBytes: o.frameBytes,
+      ecc: o.ecc,
+      gridCodes: o.grid,
+      format: o.format === "html" ? "apng" : o.format,
+      fps: o.fps,
+      scale: o.scale,
+      cycles: o.cycles,
+      sessionId: (Math.random() * 0x10000) | 0,
+      onProgress: (done, totalFrames) => {
+        if (o.quiet || (done !== totalFrames && done % 20 !== 0)) return;
+        process.stderr.write(`\rpart ${i}/${total}  render ${done}/${totalFrames}          `);
+      },
+    });
+    if (!result) throw new Error("export cancelled");
+    if (!o.quiet) process.stderr.write("\r\u001b[2K");
+
+    const apng = Buffer.concat(result.parts);
+    const body = o.format === "html"
+      ? Buffer.from(renderPlayer({
+          apng, fileName: `${name} (${label})`, frameCount: result.frameCount,
+          fps: o.fps, width: result.width, height: result.height, playbackSeconds: seconds,
+        }), "utf8")
+      : apng;
+
+    const path = `${base}.${label}.${ext}`;
+    await writeFile(path, body);
+    written.push(path);
+    log(`part ${i}/${total}  ${chunk.length} B -> ${result.frameCount} frames, ` +
+        `${(body.length / 1024).toFixed(0)} KiB, ${formatDuration(seconds)}`);
+  }
+
+  log("");
+  log(`wrote     ${total} parts, ${formatDuration(playback)} of playback in total`);
+  log("");
+  log("Show them one at a time. decimen receive reassembles the original once every");
+  log("part has arrived — the parts carry their own order and checksums.");
+  return written[0];
 }

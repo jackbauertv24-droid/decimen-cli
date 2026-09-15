@@ -1,7 +1,8 @@
 // Collect a Decimen stream back into a file: frames in, fountain peeled, the
 // container unpacked and its SHA-256 verified before anything is written.
-import { writeFile } from "node:fs/promises";
+import { readFile, readdir, unlink, writeFile } from "node:fs/promises";
 import { join, basename } from "node:path";
+import { createHash } from "node:crypto";
 
 import { parseFrame, streamIdentity, unpackFile, verifyFile } from "../vendor/shared/protocol.ts";
 import { LTDecoder } from "../vendor/shared/fountain.ts";
@@ -24,6 +25,58 @@ export interface ReceiveResult {
   size: number;
   framesSeen: number;
   framesUsed: number;
+  /** Set when the payload was one part of a split transfer. */
+  part?: { index: number; total: number; have: number };
+  /** Set when that part completed the set and the original was reassembled. */
+  joined?: string;
+}
+
+/** `<file>.<runId>.pNNofMM` — the shape `send --split` gives each part. */
+const PART_NAME = /^(.+)\.([0-9a-f]{8})\.p(\d+)of(\d+)$/;
+
+interface PartName { base: string; runId: string; index: number; total: number }
+
+function parsePartName(name: string): PartName | null {
+  const m = PART_NAME.exec(name);
+  if (!m) return null;
+  return { base: m[1], runId: m[2], index: Number(m[3]), total: Number(m[4]) };
+}
+
+/**
+ * Reassemble once every part of a set is on disk.
+ *
+ * Each part was verified against its own SHA-256 as it arrived, so the only
+ * thing left to establish is that these parts belong to each other and are in
+ * the right order. The run id in the name is the first 8 hex of the whole
+ * file's digest, so re-hashing the joined result proves both at once.
+ */
+async function tryJoin(dir: string, part: PartName, log: (s: string) => void): Promise<{ joined?: string; have: number }> {
+  const found = new Map<number, string>();
+  for (const entry of await readdir(dir)) {
+    const p = parsePartName(entry);
+    if (p && p.base === part.base && p.runId === part.runId && p.total === part.total) found.set(p.index, entry);
+  }
+  if (found.size < part.total) return { have: found.size };
+
+  const chunks: Buffer[] = [];
+  for (let i = 1; i <= part.total; i++) {
+    const entry = found.get(i);
+    if (!entry) return { have: found.size };
+    chunks.push(await readFile(join(dir, entry)));
+  }
+  const whole = Buffer.concat(chunks);
+  const digest = createHash("sha256").update(whole).digest("hex");
+  if (!digest.startsWith(part.runId)) {
+    throw new Error(
+      `parts do not belong together: names say run ${part.runId}, the joined bytes hash to ${digest.slice(0, 8)}`,
+    );
+  }
+
+  const out = join(dir, part.base);
+  await writeFile(out, whole);
+  for (const entry of found.values()) await unlink(join(dir, entry));
+  log(`joined    ${part.total} parts -> ${part.base} (${whole.length} B), SHA-256 ${digest.slice(0, 16)}...\n`);
+  return { joined: out, have: found.size };
 }
 
 export async function receive(o: ReceiveOptions): Promise<ReceiveResult | null> {
@@ -65,9 +118,23 @@ export async function receive(o: ReceiveOptions): Promise<ReceiveResult | null> 
         const container = decoder!.assemble()!;
         const file = await unpackFile(container);
         if (!(await verifyFile(file))) throw new Error("SHA-256 mismatch — the reassembled file is corrupt");
+        log("\n");
+
+        // An explicit --out means the caller wants this exact payload at that
+        // exact path, so it wins over the part-joining convention.
+        const part = o.out ? null : parsePartName(file.name);
+        if (part) {
+          const path = join(o.outDir, file.name);
+          await writeFile(path, file.bytes);
+          const { joined, have } = await tryJoin(o.outDir, part, log);
+          return {
+            path, name: file.name, type: file.type, size: file.bytes.length,
+            framesSeen, framesUsed, part: { index: part.index, total: part.total, have }, joined,
+          };
+        }
+
         const path = o.out ?? join(o.outDir, basename(file.name) || "received.bin");
         await writeFile(path, file.bytes);
-        log("\n");
         return { path, name: file.name, type: file.type, size: file.bytes.length, framesSeen, framesUsed };
       }
     }

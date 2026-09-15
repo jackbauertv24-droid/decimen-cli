@@ -7,12 +7,16 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { execFileSync, spawnSync } from "node:child_process";
-import { mkdtemp, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, writeFile } from "node:fs/promises";
 import { randomBytes, createHash } from "node:crypto";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
 const CLI = new URL("../dist/cli.js", import.meta.url).pathname;
+
+/** Cursor-home escape that separates rendered frames, and the half-block glyph. */
+const HOME = "[H";
+const HALF_BLOCK = "▀";
 
 /** One rendered frame of ANSI half-blocks -> an RGBA bitmap, 5x upscaled. */
 function ansiToBitmap(text, scale = 5) {
@@ -103,4 +107,47 @@ test("play refuses a terminal too small to hold a code", () => {
   });
   assert.notEqual(run.status, 0);
   assert.match(run.stderr, /Maximise the window|smallest QR needs/);
+});
+
+test("replays an existing PNG stream in the terminal, and it still decodes", async () => {
+  const dir = await mkdtemp(join(tmpdir(), "decimen-replay-"));
+  const src = join(dir, "secret.bin");
+  const original = randomBytes(900);
+  await writeFile(src, original);
+
+  // Produce a stream the way another machine would have, then replay the
+  // picture alone — with no access to the original file.
+  const png = join(dir, "stream.png");
+  execFileSync(
+    process.execPath,
+    [CLI, "send", src, "--format", "apng", "--frame-bytes", "500", "--scale", "3", "-o", png, "-q"],
+    { encoding: "utf8" },
+  );
+
+  const run = spawnSync(process.execPath, [CLI, "play", png, "-q"], {
+    encoding: "utf8",
+    env: { ...process.env, COLUMNS: "120", LINES: "60" },
+    timeout: 6000,
+    maxBuffer: 64 * 1024 * 1024,
+  });
+  const frames = (run.stdout ?? "").split(HOME).slice(1).filter((f) => f.includes(HALF_BLOCK));
+  assert.ok(frames.length >= 4, `expected several replayed frames, got ${frames.length}`);
+
+  // Point a notional camera at the replay and hand what it sees to receive.
+  const { PNG } = await import("pngjs");
+  const shot = join(dir, "shot");
+  await mkdir(shot, { recursive: true });
+  let n = 0;
+  for (const f of frames.slice(0, 20)) {
+    const bmp = ansiToBitmap(f);
+    if (!bmp) continue;
+    const img = new PNG({ width: bmp.w, height: bmp.h });
+    bmp.px.copy(img.data);
+    await writeFile(join(shot, `frame-${String(++n).padStart(4, "0")}.png`), PNG.sync.write(img));
+  }
+  assert.ok(n > 0, "no frames survived the ANSI round trip");
+
+  execFileSync(process.execPath, [CLI, "receive", shot, "-o", join(dir, "back.bin"), "-q"], { encoding: "utf8" });
+  const sha = (b) => createHash("sha256").update(b).digest("hex");
+  assert.equal(sha(await readFile(join(dir, "back.bin"))), sha(original));
 });

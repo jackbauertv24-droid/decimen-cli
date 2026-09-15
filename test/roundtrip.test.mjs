@@ -180,3 +180,52 @@ test("the HTML player carries an intact, decodable stream", async () => {
   run("receive", apng, "-o", join(dir, "from-html.bin"), "-q");
   assert.equal(sha(await readFile(join(dir, "from-html.bin"))), sha(original));
 });
+
+test("splits a large file and rejoins it from parts arriving out of order", async () => {
+  const src = join(dir, "split-src.bin");
+  const original = randomBytes(220_000);
+  await writeFile(src, original);
+
+  const outDir = join(dir, "split-out");
+  await mkdir(outDir, { recursive: true });
+  run("send", src, "--format", "apng", "--split", "10s", "--scale", "2", "-o", join(outDir, "s.png"), "-q");
+
+  const parts = (await readdir(outDir)).filter((f) => /\.p\d+of\d+\.png$/.test(f)).sort();
+  assert.ok(parts.length >= 2, `expected the file to split, got ${parts.length} part(s)`);
+
+  // Deliver them in the wrong order — a camera has no idea which part is which.
+  const inDir = join(dir, "split-in");
+  await mkdir(inDir, { recursive: true });
+  const shuffled = [...parts].reverse();
+  let last = "";
+  for (const p of shuffled) last = run("receive", join(outDir, p), "-d", inDir, "-q").trim();
+
+  // The last part completes the set, so receive prints the joined file.
+  assert.equal(last, join(inDir, "split-src.bin"));
+  assert.equal(sha(await readFile(last)), sha(original));
+
+  // And the parts are cleaned up once they have been consumed.
+  const leftovers = (await readdir(inDir)).filter((f) => /\.p\d+of\d+$/.test(f));
+  assert.deepEqual(leftovers, [], "part files should be removed after joining");
+});
+
+test("holds parts separately until the whole set has arrived", async () => {
+  const src = join(dir, "partial-src.bin");
+  const original = randomBytes(200_000);
+  await writeFile(src, original);
+
+  const outDir = join(dir, "partial-out");
+  await mkdir(outDir, { recursive: true });
+  run("send", src, "--format", "apng", "--split", "8s", "--scale", "2", "-o", join(outDir, "s.png"), "-q");
+  const parts = (await readdir(outDir)).filter((f) => /\.p\d+of\d+\.png$/.test(f)).sort();
+  assert.ok(parts.length >= 3, `need at least three parts for this test, got ${parts.length}`);
+
+  const inDir = join(dir, "partial-in");
+  await mkdir(inDir, { recursive: true });
+  for (const p of parts.slice(0, -1)) run("receive", join(outDir, p), "-d", inDir, "-q");
+
+  const held = (await readdir(inDir)).sort();
+  assert.equal(held.length, parts.length - 1, "every arrived part should be held on disk");
+  assert.ok(held.every((f) => /\.[0-9a-f]{8}\.p\d+of\d+$/.test(f)), `unexpected names: ${held}`);
+  assert.ok(!held.includes("partial-src.bin"), "must not assemble before the last part arrives");
+});

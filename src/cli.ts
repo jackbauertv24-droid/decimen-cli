@@ -10,17 +10,20 @@ for (const stream of [process.stdout, process.stderr]) {
 }
 import { cameraSource, ffmpegFrames, framesFromPath } from "./frames.ts";
 import { receive } from "./receive.ts";
-import { SEND_DEFAULTS, send, type SendFormat } from "./send.ts";
+import { SEND_DEFAULTS, autoSplitBytes, send, type SendFormat } from "./send.ts";
 import { doctor } from "./doctor.ts";
 import { play } from "./play.ts";
 import type { EccLevel } from "../vendor/send/qr-frame.ts";
 
 const USAGE = `decimen — optical file transfer over animated QR, from the terminal
 
-  decimen play <file> [options]          show the stream in THIS terminal, no browser
+  decimen play <file|stream> [options]   show a stream in THIS terminal, no browser
   decimen send <file> [options]          write the stream to a file
   decimen receive <source> [options]     read a stream back into a file
   decimen doctor                         check this install works, no file needed
+
+play accepts either a source file (encoded live) or a stream already produced by
+send — an APNG or a directory of frames — which is replayed as-is.
 
 play options — writes nothing, opens nothing
       --fps <n>          frames per second           (default: ${SEND_DEFAULTS.fps})
@@ -36,6 +39,7 @@ send options
       --ecc <L|M|Q|H>    QR error correction         (default: ${SEND_DEFAULTS.ecc})
       --grid <n>         QR codes per frame          (default: ${SEND_DEFAULTS.grid})
       --frame-bytes <n>  wire bytes per QR           (default: ${SEND_DEFAULTS.frameBytes})
+      --split <size>     split into parts: 500k, 2M, 60s, or auto
 
 receive sources
   <dir>                  a directory of .png frames
@@ -65,6 +69,7 @@ const { values, positionals } = parseArgs({
     ecc: { type: "string" },
     grid: { type: "string" },
     "frame-bytes": { type: "string" },
+    split: { type: "string" },
     symbols: { type: "string" },
     camera: { type: "boolean" },
     device: { type: "string" },
@@ -95,6 +100,22 @@ function num(raw: string | undefined, fallback: number, label: string): number {
   const n = Number(raw);
   if (!Number.isFinite(n) || n <= 0) fail(`--${label} must be a positive number`);
   return n;
+}
+
+/** `500k`, `2M`, `60s` or `auto`. A duration is converted to a size later. */
+function parseSplit(raw: string): { bytes?: number; seconds?: number } {
+  const t = raw.trim().toLowerCase();
+  if (t === "auto") return { seconds: 60 };
+  const m = /^(\d+(?:\.\d+)?)([kmgs]?)$/.exec(t);
+  if (!m) fail(`--split wants a size like 500k or 2M, a duration like 60s, or auto — got "${raw}"`);
+  const n = Number(m[1]);
+  switch (m[2]) {
+    case "s": return { seconds: n };
+    case "k": return { bytes: Math.round(n * 1024) };
+    case "m": return { bytes: Math.round(n * 1024 * 1024) };
+    case "g": return { bytes: Math.round(n * 1024 * 1024 * 1024) };
+    default:  return { bytes: Math.round(n) };
+  }
 }
 
 function fail(message: string): never {
@@ -130,16 +151,28 @@ try {
     const ecc = (values.ecc ?? SEND_DEFAULTS.ecc).toUpperCase() as EccLevel;
     if (!["L", "M", "Q", "H"].includes(ecc)) fail("--ecc must be L, M, Q or H");
 
+    const fps = num(values.fps, SEND_DEFAULTS.fps, "fps");
+    const cycles = num(values.cycles, SEND_DEFAULTS.cycles, "cycles");
+    const grid = num(values.grid, SEND_DEFAULTS.grid, "grid");
+    const frameBytes = num(values["frame-bytes"], SEND_DEFAULTS.frameBytes, "frame-bytes");
+
+    let split: number | undefined;
+    if (values.split !== undefined) {
+      const parsed = parseSplit(values.split);
+      split = parsed.bytes ?? autoSplitBytes(parsed.seconds!, frameBytes, fps, cycles, grid);
+    }
+
     await send({
       input,
       out: values.out,
       format,
       ecc,
-      fps: num(values.fps, SEND_DEFAULTS.fps, "fps"),
+      split,
+      fps,
       scale: num(values.scale, SEND_DEFAULTS.scale, "scale"),
-      cycles: num(values.cycles, SEND_DEFAULTS.cycles, "cycles"),
-      grid: num(values.grid, SEND_DEFAULTS.grid, "grid"),
-      frameBytes: num(values["frame-bytes"], SEND_DEFAULTS.frameBytes, "frame-bytes"),
+      cycles,
+      grid,
+      frameBytes,
       quiet,
     });
   } else if (command === "receive") {
@@ -172,8 +205,12 @@ try {
     if (!quiet) {
       console.error(`received  ${result.name} (${result.type}), ${result.size} B`);
       console.error(`          SHA-256 verified, ${result.framesUsed} usable frames of ${result.framesSeen} read`);
+      if (result.part && !result.joined) {
+        const missing = result.part.total - result.part.have;
+        console.error(`part      ${result.part.index} of ${result.part.total}; ${missing} still to come`);
+      }
     }
-    console.log(result.path);
+    console.log(result.joined ?? result.path);
     stop?.();
   } else {
     fail(`unknown command "${command}" — expected play, send, receive or doctor`);

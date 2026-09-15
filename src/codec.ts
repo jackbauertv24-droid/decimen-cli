@@ -75,6 +75,34 @@ export interface RgbaFrame {
  * Every QR payload found in one frame. `maxSymbols` should match the sender's
  * grid, plus slack — reading more costs time on a frame that holds fewer.
  */
+export interface ReadSymbol {
+  bytes: Uint8Array;
+  /** Symbol dimension in modules (17 + 4·version); 0 when the codec could not tell. */
+  modules: number;
+}
+
+/** Like readFrame, but keeps the symbol geometry alongside the payload. */
+export function readSymbols(zx: DecimenModule, frame: RgbaFrame, maxSymbols: number): ReadSymbol[] {
+  const bytes = frame.width * frame.height * 4;
+  const ptr = zx._malloc(bytes);
+  try {
+    zx.HEAPU8.set(frame.data.subarray(0, bytes), ptr);
+    const vec = zx.readFull(ptr, frame.width, frame.height, true, maxSymbols, false);
+    try {
+      const out: ReadSymbol[] = [];
+      for (let i = 0; i < vec.size(); i++) {
+        const r = vec.get(i);
+        if (r.valid && r.bytes.length > 0) out.push({ bytes: new Uint8Array(r.bytes), modules: r.modules });
+      }
+      return out;
+    } finally {
+      vec.delete();
+    }
+  } finally {
+    zx._free(ptr);
+  }
+}
+
 export function readFrame(zx: DecimenModule, frame: RgbaFrame, maxSymbols: number): Uint8Array[] {
   const bytes = frame.width * frame.height * 4;
   const ptr = zx._malloc(bytes);

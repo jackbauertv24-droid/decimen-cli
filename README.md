@@ -18,7 +18,8 @@ between the two devices, no pairing, no account, no upload.
 ## No browser on the sending machine
 
 ```sh
-decimen play ./secrets.txt
+decimen play ./secrets.txt          # encode it now and draw the frames live
+decimen play ./stream.decimen.png   # replay a stream someone already produced
 ```
 
 That draws the stream in the terminal you are already sitting in. Nothing is
@@ -43,6 +44,60 @@ A bigger terminal carries more bytes per frame and finishes sooner. Pass
 This is the point of having a CLI at all: the machine holding the secret opens
 nothing.
 
+### Replaying a stream you already have
+
+`play` takes either a source file or a stream `send` produced earlier — an APNG
+or a directory of frames. The second form needs no access to the original file,
+which matters when the stream was made on one machine and has to be shown on
+another.
+
+Replay recovers the module grid from the picture rather than re-encoding it. The
+upscale factor is taken from a decoded symbol's geometry, not guessed from the
+image, because sampling on the wrong grid aliases the code into something no
+reader will decode. A stream written at `--scale 3` with 77-module symbols comes
+back as exactly 85x44 terminal cells.
+
+## Splitting a large file
+
+```sh
+decimen send ./archive.tar --split 60s    # parts that each play for about a minute
+decimen send ./archive.tar --split 500k   # or fix the part size directly
+decimen send ./archive.tar --split auto   # same as 60s
+```
+
+Playback duration is the real constraint — nobody holds a camera at a screen for
+eleven minutes — so the natural way to size a part is to work backwards from how
+long one should take. `--split 60s` does that arithmetic for you; a plain size
+(`500k`, `2M`) is there when you would rather say it directly.
+
+Each part is a complete, independently decodable stream. Show them one at a
+time, in any order:
+
+```
+size      250000 B -> 3 parts of up to 87930 B  [run 466b53f3]
+
+part 1/3  87930 B -> 124 frames, 760 KiB, 12 s
+part 2/3  87930 B -> 124 frames, 761 KiB, 12 s
+part 3/3  74140 B -> 104 frames, 640 KiB, 10 s
+```
+
+`receive` recognises the parts and reassembles the original once the last one
+arrives, whatever order they turn up in:
+
+```
+received  archive.tar.466b53f3.p2of3 …
+part      2 of 3; 2 still to come
+...
+joined    3 parts -> archive.tar (250000 B), SHA-256 466b53f38aada9de...
+```
+
+Two checks hold it together. Each part carries its own container, so its name,
+media type and SHA-256 are verified on arrival exactly as an unsplit transfer
+would be. And the `run` id in the part name is the first 8 hex of the **whole**
+file's digest, so re-hashing the joined result proves both that the parts belong
+to each other and that they went back together in the right order. Parts from
+two different sends of the same filename cannot be silently mixed.
+
 ## Installing
 
 Pick whichever matches your machine. All three give the same tool.
@@ -50,7 +105,7 @@ Pick whichever matches your machine. All three give the same tool.
 ### 1. One file, no npm (works where npm cannot reach a registry)
 
 ```sh
-curl -LO https://github.com/jackbauertv24-droid/decimen-cli/releases/download/v1.1.0/decimen.mjs
+curl -LO https://github.com/jackbauertv24-droid/decimen-cli/releases/download/v1.2.0/decimen.mjs
 node decimen.mjs doctor
 node decimen.mjs send ./report.pdf
 ```
@@ -63,17 +118,17 @@ it cannot reach, and this route never involves npm at all.
 ### 2. Install it properly
 
 ```sh
-npm install -g https://github.com/jackbauertv24-droid/decimen-cli/releases/download/v1.1.0/decimen-cli-1.1.0.tgz
+npm install -g https://github.com/jackbauertv24-droid/decimen-cli/releases/download/v1.2.0/decimen-cli-1.2.0.tgz
 decimen doctor
 ```
 
-Also works from a tarball you already downloaded — `npm install -g ./decimen-cli-1.1.0.tgz`
+Also works from a tarball you already downloaded — `npm install -g ./decimen-cli-1.2.0.tgz`
 needs no network.
 
 ### 3. Run once without installing
 
 ```sh
-npx -y https://github.com/jackbauertv24-droid/decimen-cli/releases/download/v1.1.0/decimen-cli-1.1.0.tgz send ./report.pdf
+npx -y https://github.com/jackbauertv24-droid/decimen-cli/releases/download/v1.2.0/decimen-cli-1.2.0.tgz send ./report.pdf
 ```
 
 Under a second cold, but it does require npm to reach the network.
@@ -91,7 +146,7 @@ nothing. Use a release asset instead.
 The tarball is a plain gzipped tar. Extract it and run the bundle directly:
 
 ```sh
-tar -xzf decimen-cli-1.1.0.tgz
+tar -xzf decimen-cli-1.2.0.tgz
 node package/dist/cli.js doctor
 ```
 
@@ -104,7 +159,7 @@ through the real WASM decoder and compares SHA-256:
 ```
 $ decimen doctor
 
-  cli           1.1.0  build 4c32306 (2026-09-15)
+  cli           1.2.0  build 4c32306 (2026-09-15)
   node          v24.19.0  linux x64
   wire format   v3
   startup       62 ms from process start to here
@@ -131,7 +186,7 @@ the package, which is what the release tarball below is for.
 
 ```sh
 decimen --version
-# decimen-cli 1.1.0  build be18fbe (2026-09-15)  wire v3
+# decimen-cli 1.2.0  build be18fbe (2026-09-15)  wire v3
 ```
 
 The build hash is baked in at bundle time and names the source commit the
@@ -183,6 +238,7 @@ send
       --ecc <L|M|Q|H>    QR error correction         (default: L)
       --grid <n>         QR codes per frame          (default: 1)
       --frame-bytes <n>  wire bytes per QR           (default: 2953)
+      --split <size>     split into parts: 500k, 2M, 60s, or auto
 
 receive
   -o, --out <path>       write here instead of <dir>/<original name>
@@ -325,6 +381,9 @@ missing quiet zone, or rows that do not line up with modules.
 ✔ refuses a source with no Decimen frames
 ✔ a camera pointed at the terminal can read the stream
 ✔ play refuses a terminal too small to hold a code
+✔ replays an existing PNG stream in the terminal, and it still decodes
+✔ splits a large file and rejoins it from parts arriving out of order
+✔ holds parts separately until the whole set has arrived
 ```
 
 Wire compatibility with decimen.app is established at the byte level: frames

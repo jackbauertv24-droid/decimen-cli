@@ -71,21 +71,29 @@ const CELL = [
 export function renderFrame(frame: ModuleFrame, quiet = QUIET_ZONE_MODULES): string {
   const span = frame.size + quiet * 2;
   // Dark module => paint dark. Outside the code (the quiet zone) is light.
-  const at = (x: number, y: number): 0 | 1 => {
+  return renderGrid(span, span, (x, y) => {
     const mx = x - quiet;
     const my = y - quiet;
     if (mx < 0 || my < 0 || mx >= frame.size || my >= frame.size) return 0;
     return frame.data[my * frame.size + mx] ? 1 : 0;
-  };
+  });
+}
 
+/** A module grid that already carries its quiet zone — recovered from a raster. */
+export function renderModules(g: ModuleGrid): string {
+  return renderGrid(g.width, g.height, (x, y) => (g.grid[y * g.width + x] ? 1 : 0));
+}
+
+/** The shared half-block renderer, in module coordinates. */
+function renderGrid(spanX: number, spanY: number, at: (x: number, y: number) => 0 | 1): string {
   const out: string[] = [];
-  for (let y = 0; y < span; y += 2) {
+  for (let y = 0; y < spanY; y += 2) {
     let row = "";
     let run = -1;
     let count = 0;
-    for (let x = 0; x < span; x++) {
+    for (let x = 0; x < spanX; x++) {
       const top = at(x, y);
-      const bottom = y + 1 < span ? at(x, y + 1) : 0;
+      const bottom = y + 1 < spanY ? at(x, y + 1) : 0;
       // Light is what the camera reads as white: foreground white where the
       // half is light, so "▀" shows light on top and the background shows the
       // bottom half.
@@ -102,6 +110,45 @@ export function renderFrame(frame: ModuleFrame, quiet = QUIET_ZONE_MODULES): str
     out.push(row + "\x1b[0m");
   }
   return out.join("\n");
+}
+
+export interface ModuleGrid {
+  grid: Uint8Array;   // 1 = dark
+  width: number;      // modules across, quiet zone included
+  height: number;
+}
+
+/**
+ * Recover the module grid from a rasterised frame.
+ *
+ * `send` upscales each module to a scale×scale block of identical pixels, so
+ * sampling the centre of each block inverts that exactly — no filtering, no
+ * guesswork. Getting `scale` wrong aliases the code into something no reader
+ * will decode, which is why it is derived from the symbol geometry rather than
+ * from the image alone.
+ */
+export function rasterToModules(data: Uint8Array, width: number, height: number, scale: number): ModuleGrid {
+  const cols = Math.floor(width / scale);
+  const rows = Math.floor(height / scale);
+  const half = scale >> 1;
+  const grid = new Uint8Array(cols * rows);
+  for (let y = 0; y < rows; y++) {
+    const py = y * scale + half;
+    for (let x = 0; x < cols; x++) {
+      const px = x * scale + half;
+      // Bilevel palette: anything below mid-grey is a dark module.
+      grid[y * cols + x] = data[(py * width + px) * 4] < 128 ? 1 : 0;
+    }
+  }
+  return { grid, width: cols, height: rows };
+}
+
+/** The integer upscale a raster was written at, from one decoded symbol's dimension. */
+export function scaleFromGeometry(height: number, modules: number, quiet = QUIET_ZONE_MODULES): number | null {
+  const span = modules + quiet * 2;
+  if (span <= 0 || height % span !== 0) return null;
+  const scale = height / span;
+  return scale >= 1 ? scale : null;
 }
 
 /** Largest wire-frame size whose QR still fits the terminal, or null if none do. */
