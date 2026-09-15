@@ -24,7 +24,8 @@ receive sources
   <dir>                  a directory of .png frames
   <file.png>             an APNG produced by "decimen send"
   <file.mp4>             any video ffmpeg can read
-  --camera [device]      live capture (needs ffmpeg)
+  --camera               live capture (needs ffmpeg)
+      --device <name>    capture device (default: the platform's first camera)
 
 receive options
   -o, --out <path>       write here instead of <dir>/<original name>
@@ -48,7 +49,8 @@ const { values, positionals } = parseArgs({
     grid: { type: "string" },
     "frame-bytes": { type: "string" },
     symbols: { type: "string" },
-    camera: { type: "string" },
+    camera: { type: "boolean" },
+    device: { type: "string" },
     quiet: { type: "boolean", short: "q" },
     help: { type: "boolean", short: "h" },
     version: { type: "boolean", short: "v" },
@@ -105,14 +107,14 @@ try {
     });
   } else if (command === "receive") {
     const fps = values.fps ? num(values.fps, 0, "fps") : undefined;
-    const useCamera = values.camera !== undefined;
+    const useCamera = values.camera ?? false;
     const source = rest[0];
     if (!useCamera && !source) fail("receive needs a source — a directory, an APNG, a video, or --camera");
 
     let frames;
     let stop: (() => void) | undefined;
     if (useCamera) {
-      const device = values.camera || undefined;
+      const device = values.device || undefined;
       const started = ffmpegFrames(cameraSource(device), fps);
       frames = started.frames;
       stop = () => started.child.kill("SIGTERM");

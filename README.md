@@ -49,6 +49,7 @@ decimen receive ./report.pdf.decimen.png      # read back an APNG
 decimen receive ./frames/                     # a directory of PNG frames
 decimen receive ./screen-recording.mp4        # any video ffmpeg can read
 decimen receive --camera                      # live capture (needs ffmpeg)
+decimen receive --camera --device /dev/video1 # pick a specific capture device
 ```
 
 It prints the path it wrote and verifies the payload's SHA-256 before writing
@@ -73,6 +74,7 @@ receive
   -d, --dir <path>       directory to write into     (default: .)
       --fps <n>          sample video/camera at n fps
       --symbols <n>      max QR codes per frame      (default: 4)
+      --device <name>    capture device for --camera
 ```
 
 `--format zip` writes numbered PNGs instead of an APNG, which is what you want

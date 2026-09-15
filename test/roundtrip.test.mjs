@@ -66,3 +66,30 @@ test("refuses a source with no Decimen frames", async () => {
   assert.throws(() => run("receive", join(dir, "not-a-stream.txt"), "-q"));
   void empty;
 });
+
+test("parses the documented flags without crashing the argument parser", () => {
+  // --camera takes no value; the device goes in --device. Regression test:
+  // declaring it as a string option made `receive --camera` throw a raw
+  // ERR_PARSE_ARGS_INVALID_OPTION_VALUE stack trace at the user.
+  const help = run("--help");
+  assert.match(help, /--camera\b/);
+  assert.match(help, /--device <name>/);
+
+  // Without ffmpeg this exits non-zero with a readable message rather than a
+  // parser stack trace; with ffmpeg it would block on the camera, so only the
+  // parse path is asserted here.
+  try {
+    execFileSync(process.execPath, [CLI, "receive", "--camera"], { encoding: "utf8", stdio: ["ignore", "pipe", "pipe"], timeout: 4000 });
+  } catch (e) {
+    assert.doesNotMatch(String(e.stderr ?? ""), /ERR_PARSE_ARGS/);
+  }
+});
+
+test("rejects an unknown command with a readable message", () => {
+  try {
+    run("teleport", "./x");
+    assert.fail("expected a non-zero exit");
+  } catch (e) {
+    assert.match(String(e.stderr), /unknown command "teleport"/);
+  }
+});
