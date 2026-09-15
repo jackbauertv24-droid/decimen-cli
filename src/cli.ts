@@ -58,8 +58,11 @@ const { values, positionals } = parseArgs({
   strict: true,
 });
 
+declare const __BUILD_REV__: string;
+declare const __BUILD_DATE__: string;
+
 if (values.version) {
-  console.log("decimen-cli 1.0.0 (wire v3)");
+  console.log(`decimen-cli 1.0.0  build ${__BUILD_REV__} (${__BUILD_DATE__})  wire v3`);
   process.exit(0);
 }
 

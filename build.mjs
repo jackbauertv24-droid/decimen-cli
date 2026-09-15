@@ -1,7 +1,19 @@
 // Bundle the CLI into a single dependency-free ESM file so that
 // `npx github:<owner>/decimen-cli` installs nothing and starts immediately.
 import { build } from "esbuild";
-import { copyFile, mkdir, chmod } from "node:fs/promises";
+import { mkdir, chmod } from "node:fs/promises";
+import { execSync } from "node:child_process";
+
+// Baked into --version so anyone can tell exactly which build they are running.
+function gitRev() {
+  try {
+    const rev = execSync("git rev-parse --short HEAD", { encoding: "utf8" }).trim();
+    const dirty = execSync("git status --porcelain", { encoding: "utf8" }).trim() !== "";
+    return dirty ? `${rev}-dirty` : rev;
+  } catch {
+    return "unknown";
+  }
+}
 
 await mkdir("dist", { recursive: true });
 await build({
@@ -12,6 +24,10 @@ await build({
   format: "esm",
   target: "node20",
   legalComments: "none",
+  define: {
+    __BUILD_REV__: JSON.stringify(gitRev()),
+    __BUILD_DATE__: JSON.stringify(new Date().toISOString().slice(0, 10)),
+  },
   // pngjs is CommonJS; an ESM bundle has no require() of its own to lend it.
   banner: {
     js: [
@@ -23,6 +39,6 @@ await build({
   logLevel: "info",
 });
 await chmod("dist/cli.js", 0o755);
-// The codec binary stays a sibling of the bundle; src/codec.ts looks for it there.
-await copyFile("vendor/decimen-codec/decimen_codec.wasm", "dist/decimen_codec.wasm");
-console.log("dist/decimen_codec.wasm copied");
+// The codec binary is NOT copied next to the bundle: src/codec.ts falls back to
+// vendor/, and shipping 281 KB twice only makes the clone slower.
+console.log("built", gitRev());

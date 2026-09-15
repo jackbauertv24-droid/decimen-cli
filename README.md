@@ -34,6 +34,34 @@ npm install -g github:jackbauertv24-droid/decimen-cli
 decimen send ./report.pdf
 ```
 
+## Which version am I running?
+
+```sh
+decimen --version
+# decimen-cli 1.0.0  build fa775ab (2026-09-15)  wire v3
+```
+
+The build hash is baked in at bundle time and names the source commit the
+binary was built from, so you can compare it against the commit list on GitHub.
+
+`npx github:...` re-resolves the repository on **every single run** — it does
+not serve you a stale build, but it also re-clones roughly a megabyte before
+your file is touched, and that clone is the spinner you are watching. It costs
+a few seconds on a fast connection and considerably more on a slow one, every
+time.
+
+**If you are going to run this more than once, install it.** One clone, then
+no network at all:
+
+```sh
+npm install -g github:jackbauertv24-droid/decimen-cli
+decimen --version          # confirm the build
+decimen send ./report.pdf  # starts instantly from here on
+```
+
+To update later, re-run the same `npm install -g`. To pin a build instead,
+append a commit: `github:jackbauertv24-droid/decimen-cli#fa775ab`.
+
 ## Receive
 
 ### With the web app — nothing to install
