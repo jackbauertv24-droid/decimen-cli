@@ -93,3 +93,20 @@ test("rejects an unknown command with a readable message", () => {
     assert.match(String(e.stderr), /unknown command "teleport"/);
   }
 });
+
+test("doctor self-tests the install without touching a file", () => {
+  const out = run("doctor");
+  assert.match(out, /decimen doctor/);
+  assert.match(out, /codec\s+decimen-codec \d+\.\d+\.\d+/);
+  assert.match(out, /sha-256\s+match/);
+  assert.match(out, /OK — sending and receiving both work/);
+  // No file argument, and nothing written: the whole check runs in memory.
+  assert.doesNotMatch(out, /wrote/);
+});
+
+test("survives its output pipe closing early", () => {
+  // `decimen doctor | head` used to die with an unhandled EPIPE stack trace.
+  const out = execFileSync("/bin/sh", ["-c", `${process.execPath} ${CLI} doctor | head -3`], { encoding: "utf8" });
+  assert.doesNotMatch(out, /EPIPE/);
+  assert.doesNotMatch(out, /Unhandled/);
+});

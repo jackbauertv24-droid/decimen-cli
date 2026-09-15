@@ -1,6 +1,6 @@
 {
   "name": "decimen-cli",
-  "version": "1.0.0",
+  "version": "1.0.1",
   "description": "Optical file transfer from the terminal: send a file as an animated QR stream that decimen.app can read off the screen, and receive one back.",
   "type": "module",
   "bin": { "decimen": "dist/cli.js" },

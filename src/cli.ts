@@ -1,7 +1,17 @@
 import { parseArgs } from "node:util";
+
+// Piping into head/less closes the pipe early. Without this, Node turns an
+// ordinary `decimen doctor | head` into an unhandled EPIPE stack trace.
+for (const stream of [process.stdout, process.stderr]) {
+  stream.on("error", (e: NodeJS.ErrnoException) => {
+    if (e.code === "EPIPE") process.exit(0);
+    throw e;
+  });
+}
 import { cameraSource, ffmpegFrames, framesFromPath } from "./frames.ts";
 import { receive } from "./receive.ts";
 import { SEND_DEFAULTS, send } from "./send.ts";
+import { doctor } from "./doctor.ts";
 import type { ExportFormat } from "../vendor/send/export.ts";
 import type { EccLevel } from "../vendor/send/qr-frame.ts";
 
@@ -9,6 +19,7 @@ const USAGE = `decimen — optical file transfer over animated QR, from the term
 
   decimen send <file> [options]          render a file as a QR animation
   decimen receive <source> [options]     read a stream back into a file
+  decimen doctor                         check this install works, no file needed
 
 send options
   -o, --out <path>       output file (default: <file>.decimen.png)
@@ -58,11 +69,12 @@ const { values, positionals } = parseArgs({
   strict: true,
 });
 
+declare const __PKG_VERSION__: string;
 declare const __BUILD_REV__: string;
 declare const __BUILD_DATE__: string;
 
 if (values.version) {
-  console.log(`decimen-cli 1.0.0  build ${__BUILD_REV__} (${__BUILD_DATE__})  wire v3`);
+  console.log(`decimen-cli ${__PKG_VERSION__}  build ${__BUILD_REV__} (${__BUILD_DATE__})  wire v3`);
   process.exit(0);
 }
 
@@ -87,7 +99,9 @@ function fail(message: string): never {
 const quiet = values.quiet ?? false;
 
 try {
-  if (command === "send") {
+  if (command === "doctor") {
+    process.exit(await doctor());
+  } else if (command === "send") {
     const input = rest[0];
     if (!input) fail("send needs a file — try: decimen send ./report.pdf");
 
@@ -142,7 +156,7 @@ try {
     console.log(result.path);
     stop?.();
   } else {
-    fail(`unknown command "${command}" — expected send or receive`);
+    fail(`unknown command "${command}" — expected send, receive or doctor`);
   }
 } catch (e) {
   fail(e instanceof Error ? e.message : String(e));

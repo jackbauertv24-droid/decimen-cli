@@ -1,7 +1,7 @@
 // Bundle the CLI into a single dependency-free ESM file so that
 // `npx github:<owner>/decimen-cli` installs nothing and starts immediately.
 import { build } from "esbuild";
-import { mkdir, chmod } from "node:fs/promises";
+import { mkdir, chmod, readFile } from "node:fs/promises";
 import { execSync } from "node:child_process";
 
 // Baked into --version so anyone can tell exactly which build they are running.
@@ -15,6 +15,7 @@ function gitRev() {
   }
 }
 
+const pkg = JSON.parse(await readFile("package.json", "utf8"));
 await mkdir("dist", { recursive: true });
 await build({
   entryPoints: ["src/cli.ts"],
@@ -25,6 +26,7 @@ await build({
   target: "node20",
   legalComments: "none",
   define: {
+    __PKG_VERSION__: JSON.stringify(pkg.version),
     __BUILD_REV__: JSON.stringify(gitRev()),
     __BUILD_DATE__: JSON.stringify(new Date().toISOString().slice(0, 10)),
   },

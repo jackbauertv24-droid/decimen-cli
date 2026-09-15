@@ -46,6 +46,38 @@ command ends up pointing at nothing.
 
 The release tarball avoids git entirely. Use it.
 
+## Is it working? `decimen doctor`
+
+Checks the install end to end without sending anything. No file argument,
+nothing written to disk — it encodes a payload in memory, reads the frames back
+through the real WASM decoder and compares SHA-256:
+
+```
+$ decimen doctor
+
+  cli           1.0.1  build bcdc4ab (2026-09-15)
+  node          v24.19.0  linux x64
+  wire format   v3
+  startup       62 ms from process start to here
+  codec         decimen-codec 0.2.0 build dc2b8c5   loaded in 8 ms
+  ffmpeg        not found — only needed for video and camera input
+
+  self-test     encode -> QR -> decode -> verify, entirely in memory
+    payload     720 B -> 2 frames, 370x370
+    encode      62 ms
+    decode      56 ms  (1 symbol read)
+    sha-256     match
+
+  OK — sending and receiving both work on this machine.
+```
+
+It exits non-zero if any check fails, so it works in a script.
+
+The `startup` line is the one that settles arguments about speed: it is the
+time from process launch to that line. **If npm spun for thirty seconds and
+this reports 62 ms, the delay was never in this program** — it was npm fetching
+the package, which is what the release tarball below is for.
+
 ## Which version am I running?
 
 ```sh
