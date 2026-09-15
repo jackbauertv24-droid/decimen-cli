@@ -3,7 +3,7 @@
 import { test, before } from "node:test";
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
-import { mkdtemp, readFile, writeFile, readdir, rm } from "node:fs/promises";
+import { mkdtemp, readFile, writeFile, readdir, rm, mkdir, copyFile } from "node:fs/promises";
 import { randomBytes, createHash } from "node:crypto";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -109,4 +109,25 @@ test("survives its output pipe closing early", () => {
   const out = execFileSync("/bin/sh", ["-c", `${process.execPath} ${CLI} doctor | head -3`], { encoding: "utf8" });
   assert.doesNotMatch(out, /EPIPE/);
   assert.doesNotMatch(out, /Unhandled/);
+});
+
+test("the single-file bundle works with nothing beside it", async () => {
+  // dist/decimen.mjs carries the WASM codec inlined, for machines where npm
+  // cannot reach a registry: one download, no extraction, no install.
+  const solo = join(dir, "solo");
+  await mkdir(solo, { recursive: true });
+  await copyFile(new URL("../dist/decimen.mjs", import.meta.url).pathname, join(solo, "decimen.mjs"));
+  assert.deepEqual(await readdir(solo), ["decimen.mjs"], "nothing else may be present");
+
+  const src = join(solo, "payload.bin");
+  const original = randomBytes(40_000);
+  await writeFile(src, original);
+
+  const solorun = (...args) =>
+    execFileSync(process.execPath, [join(solo, "decimen.mjs"), ...args], { encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] });
+
+  assert.match(solorun("doctor"), /OK — sending and receiving both work/);
+  solorun("send", src, "-o", join(solo, "s.png"), "-q");
+  solorun("receive", join(solo, "s.png"), "-o", join(solo, "out.bin"), "-q");
+  assert.equal(sha(await readFile(join(solo, "out.bin"))), sha(original));
 });

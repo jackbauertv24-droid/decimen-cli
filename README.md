@@ -15,36 +15,57 @@ between the two devices, no pairing, no account, no upload.
 └──────────────┘                        └──────────────┘
 ```
 
-## Send: the one-liner
+## Running it
 
-Anything with Node 20+ on it, no install step, no clone:
+Pick whichever matches your machine. All three give the same tool.
 
-```sh
-npx -y https://github.com/jackbauertv24-droid/decimen-cli/releases/download/v1.0.2/decimen-cli-1.0.2.tgz send ./report.pdf
-```
-
-That writes `report.pdf.decimen.png` — an APNG. Play it fullscreen and point a
-camera at it. Cold, with an empty cache, the whole thing takes under a second:
-the tarball is 365 KB of prebuilt bundle with zero runtime dependencies, so
-there is nothing to compile and nothing else to download.
-
-Install it properly if you will use it more than once:
+### 1. One file, no npm (works where npm cannot reach a registry)
 
 ```sh
-npm install -g https://github.com/jackbauertv24-droid/decimen-cli/releases/download/v1.0.2/decimen-cli-1.0.2.tgz
-decimen send ./report.pdf
+curl -LO https://github.com/jackbauertv24-droid/decimen-cli/releases/download/v1.0.3/decimen.mjs
+node decimen.mjs doctor
+node decimen.mjs send ./report.pdf
 ```
 
-### Avoid the `github:` spec
+One download, nothing to install and nothing to extract. The WASM codec is
+inlined, so the file works on its own in an empty directory. This is the path
+to use if `npx` hangs on a spinner — that spinner is npm talking to a registry
+it cannot reach, and this route never involves npm at all.
 
-`npx github:jackbauertv24-droid/decimen-cli` works, but re-clones the whole
-repository on **every single run** — about a megabyte before your file is
-touched, roughly six seconds on a fast connection and much worse on a slow one.
-That clone is the spinner. `npm install -g github:...` is worse: on npm 11 it
-can leave a dangling symlink into npm's own cache directory, so the `decimen`
-command ends up pointing at nothing.
+### 2. Install it properly
 
-The release tarball avoids git entirely. Use it.
+```sh
+npm install -g https://github.com/jackbauertv24-droid/decimen-cli/releases/download/v1.0.3/decimen-cli-1.0.3.tgz
+decimen doctor
+```
+
+Also works from a tarball you already downloaded — `npm install -g ./decimen-cli-1.0.3.tgz`
+needs no network.
+
+### 3. Run once without installing
+
+```sh
+npx -y https://github.com/jackbauertv24-droid/decimen-cli/releases/download/v1.0.3/decimen-cli-1.0.3.tgz send ./report.pdf
+```
+
+Under a second cold, but it does require npm to reach the network.
+
+### Not recommended: the `github:` spec
+
+`npx github:jackbauertv24-droid/decimen-cli` re-clones the whole repository on
+**every single run** — about a megabyte before your file is touched, and that
+clone is the spinner. `npm install -g github:...` is worse: on npm 11 it can
+leave a dangling symlink into npm's own cache, so `decimen` ends up pointing at
+nothing. Use a release asset instead.
+
+### No npm and no curl?
+
+The tarball is a plain gzipped tar. Extract it and run the bundle directly:
+
+```sh
+tar -xzf decimen-cli-1.0.3.tgz
+node package/dist/cli.js doctor
+```
 
 ## Is it working? `decimen doctor`
 
@@ -55,7 +76,7 @@ through the real WASM decoder and compares SHA-256:
 ```
 $ decimen doctor
 
-  cli           1.0.2  build 9d171f9 (2026-09-15)
+  cli           1.0.3  build 4c32306 (2026-09-15)
   node          v24.19.0  linux x64
   wire format   v3
   startup       62 ms from process start to here
@@ -249,7 +270,9 @@ npm run typecheck
 npm test
 ```
 
-`dist/` is committed on purpose: it is what makes the `npx` one-liner instant.
+`dist/` is committed on purpose: it is what lets a release asset run with
+nothing installed. `npm run build` emits both bundles — `dist/cli.js`, which
+reads the codec from `vendor/`, and `dist/decimen.mjs`, which inlines it.
 
 ## Licence
 

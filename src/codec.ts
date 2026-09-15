@@ -9,6 +9,10 @@ import { dirname, join } from "node:path";
 import DecimenCodec from "../vendor/decimen-codec/decimen_codec.js";
 import type { DecimenModule } from "../vendor/decimen-codec/decimen_codec.js";
 
+// Replaced at build time in the single-file bundle with the codec as base64,
+// and left empty in the normal build, which reads the .wasm from disk.
+declare const __INLINE_WASM_B64__: string;
+
 let cached: Promise<DecimenModule> | null = null;
 
 /** Where the .wasm sits next to the bundled CLI, and in the source tree. */
@@ -22,6 +26,21 @@ function wasmCandidates(): string[] {
 
 export function loadCodec(): Promise<DecimenModule> {
   cached ??= (async () => {
+    // The single-file build carries the codec inside it, so there is nothing
+    // to find on disk and nothing to keep next to the script.
+    if (__INLINE_WASM_B64__.length > 0) {
+      const inlined = Buffer.from(__INLINE_WASM_B64__, "base64");
+      return DecimenCodec({
+        instantiateWasm(imports, done) {
+          void (async () => {
+            const { instance, module } = await WebAssembly.instantiate(inlined as BufferSource, imports);
+            done(instance, module);
+          })();
+          return {};
+        },
+      });
+    }
+
     let bin: Buffer | null = null;
     for (const path of wasmCandidates()) {
       try {
