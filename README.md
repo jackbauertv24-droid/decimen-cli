@@ -20,47 +20,48 @@ between the two devices, no pairing, no account, no upload.
 Anything with Node 20+ on it, no install step, no clone:
 
 ```sh
-npx -y github:jackbauertv24-droid/decimen-cli send ./report.pdf
+npx -y https://github.com/jackbauertv24-droid/decimen-cli/releases/download/v1.0.0/decimen-cli-1.0.0.tgz send ./report.pdf
 ```
 
-That writes `report.pdf.decimen.png` — an APNG. Open it, play it fullscreen,
-and point a camera at it. The bundle ships with zero runtime dependencies, so
-`npx` has nothing to compile and nothing to download beyond the repo itself.
+That writes `report.pdf.decimen.png` — an APNG. Play it fullscreen and point a
+camera at it. Cold, with an empty cache, the whole thing takes under a second:
+the tarball is 365 KB of prebuilt bundle with zero runtime dependencies, so
+there is nothing to compile and nothing else to download.
 
-Prefer it on your PATH permanently:
+Install it properly if you will use it more than once:
 
 ```sh
-npm install -g github:jackbauertv24-droid/decimen-cli
+npm install -g https://github.com/jackbauertv24-droid/decimen-cli/releases/download/v1.0.0/decimen-cli-1.0.0.tgz
 decimen send ./report.pdf
 ```
+
+### Avoid the `github:` spec
+
+`npx github:jackbauertv24-droid/decimen-cli` works, but re-clones the whole
+repository on **every single run** — about a megabyte before your file is
+touched, roughly six seconds on a fast connection and much worse on a slow one.
+That clone is the spinner. `npm install -g github:...` is worse: on npm 11 it
+can leave a dangling symlink into npm's own cache directory, so the `decimen`
+command ends up pointing at nothing.
+
+The release tarball avoids git entirely. Use it.
 
 ## Which version am I running?
 
 ```sh
 decimen --version
-# decimen-cli 1.0.0  build fa775ab (2026-09-15)  wire v3
+# decimen-cli 1.0.0  build bb464d1 (2026-09-15)  wire v3
 ```
 
 The build hash is baked in at bundle time and names the source commit the
 binary was built from, so you can compare it against the commit list on GitHub.
 
-`npx github:...` re-resolves the repository on **every single run** — it does
-not serve you a stale build, but it also re-clones roughly a megabyte before
-your file is touched, and that clone is the spinner you are watching. It costs
-a few seconds on a fast connection and considerably more on a slow one, every
-time.
+`npx` re-resolves its source on every run, so you are never served a stale
+build — but with a `github:` spec that means re-cloning the repository each
+time. The release tarball is fetched and cached instead, which is why it starts
+in under a second.
 
-**If you are going to run this more than once, install it.** One clone, then
-no network at all:
-
-```sh
-npm install -g github:jackbauertv24-droid/decimen-cli
-decimen --version          # confirm the build
-decimen send ./report.pdf  # starts instantly from here on
-```
-
-To update later, re-run the same `npm install -g`. To pin a build instead,
-append a commit: `github:jackbauertv24-droid/decimen-cli#fa775ab`.
+To update later, re-run the same `npm install -g` against a newer release URL.
 
 ## Receive
 

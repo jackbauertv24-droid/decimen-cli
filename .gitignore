@@ -2,3 +2,4 @@ node_modules/
 *.decimen.png
 *.decimen.zip
 *.tsbuildinfo
+decimen-cli-*.tgz
