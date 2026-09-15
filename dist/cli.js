@@ -9795,7 +9795,7 @@ async function doctor() {
   console.log("");
   console.log("decimen doctor");
   console.log("");
-  line("cli", `${"1.0.3"}  build ${"0665ed7-dirty"} (${"2026-09-15"})`);
+  line("cli", `${"1.0.3"}  build ${"f20c6f9"} (${"2026-09-15"})`);
   line("node", `${process.version}  ${process.platform} ${process.arch}`);
   line("wire format", `v${WIRE_VERSION}`);
   line("startup", `${Math.round(process.uptime() * 1e3)} ms from process start to here`);
@@ -9937,7 +9937,7 @@ var { values, positionals } = parseArgs({
   strict: true
 });
 if (values.version) {
-  console.log(`decimen-cli ${"1.0.3"}  build ${"0665ed7-dirty"} (${"2026-09-15"})  wire v3`);
+  console.log(`decimen-cli ${"1.0.3"}  build ${"f20c6f9"} (${"2026-09-15"})  wire v3`);
   process.exit(0);
 }
 var [command, ...rest] = positionals;
