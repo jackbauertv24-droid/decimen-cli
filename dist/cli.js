@@ -9709,6 +9709,13 @@ var SEND_DEFAULTS = {
   grid: 1,
   frameBytes: DEFAULT_FRAME_BYTES
 };
+function formatDuration(seconds) {
+  const whole = Math.round(seconds);
+  if (whole < 60) return `${whole} s`;
+  const m = Math.floor(whole / 60);
+  const rest2 = whole % 60;
+  return rest2 === 0 ? `${m} min` : `${m} min ${rest2} s`;
+}
 async function send(o) {
   const bytes = new Uint8Array(await readFile3(o.input));
   const name = basename2(o.input);
@@ -9720,6 +9727,17 @@ async function send(o) {
   log(`file      ${name} (${type})`);
   log(`size      ${bytes.length} B -> ${packed.transmittedSize} B on the wire (${packed.compression})`);
   log(`stream    k=${plan.k} blocks, ${plan.seqCount} fountain frames in ${plan.animationFrames} animation frames`);
+  const playbackSeconds = plan.animationFrames / o.fps;
+  log(`playback  ${formatDuration(playbackSeconds)} at ${o.fps} fps`);
+  if (playbackSeconds > 300) {
+    log("");
+    log(`          That is a long time to hold a camera steady. To shorten it:`);
+    log(`            --grid 4     four QR codes per frame, roughly a quarter the frames`);
+    log(`            --fps 30     faster playback (needs a display and camera that keep up)`);
+    log(`            --cycles 1   half the frames, but no repair margin \u2014 loop the file instead`);
+    log("");
+  }
+  const startedAt = Date.now();
   const result = await exportAnimation({
     payload: packed.container,
     frameBytes: o.frameBytes,
@@ -9731,9 +9749,12 @@ async function send(o) {
     cycles: o.cycles,
     sessionId: Math.random() * 65536 | 0,
     onProgress: (done, total2) => {
-      if (!o.quiet && (done === total2 || done % 20 === 0)) {
-        process.stderr.write(`\rrender    ${done}/${total2}`);
-      }
+      if (o.quiet || done !== total2 && done % 20 !== 0) return;
+      const elapsed = (Date.now() - startedAt) / 1e3;
+      const eta = done > 0 ? elapsed / done * (total2 - done) : 0;
+      const pct = Math.round(done / total2 * 100);
+      const tail = done === total2 ? "" : `  eta ${formatDuration(eta)}`;
+      process.stderr.write(`\rrender    ${done}/${total2}  ${pct}%${tail}          `);
     }
   });
   if (!result) throw new Error("export cancelled");
@@ -9742,7 +9763,9 @@ async function send(o) {
   await writeFile2(outPath, Buffer.concat(result.parts));
   const total = result.parts.reduce((n, p) => n + p.length, 0);
   log(`wrote     ${outPath}`);
-  log(`          ${result.frameCount} frames @ ${o.fps} fps, ${result.width}x${result.height}, ${(total / 1024).toFixed(1)} KiB`);
+  const mib = total / 1024 / 1024;
+  const size = mib >= 1 ? `${mib.toFixed(1)} MiB` : `${(total / 1024).toFixed(1)} KiB`;
+  log(`          ${result.frameCount} frames, ${result.width}x${result.height}, ${size}, ${formatDuration(playbackSeconds)} of playback`);
   log("");
   log("Play it fullscreen and point decimen.app/receive at the screen.");
   return outPath;

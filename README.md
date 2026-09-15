@@ -80,6 +80,36 @@ receive
 `--format zip` writes numbered PNGs instead of an APNG, which is what you want
 if you plan to feed the frames to a video encoder.
 
+## What to expect
+
+`send` prints the playback duration before it starts rendering, because that
+is the number that decides whether a transfer is practical — not the render
+time. Measured on a laptop-class machine at the defaults:
+
+| Input | Frames | Render | APNG size | Playback at 10 fps |
+|---|---|---|---|---|
+| 40 KB | 56 | 0.5 s | 350 KB | 6 s |
+| 100 KB | 140 | 0.9 s | 877 KB | 14 s |
+| 1 MB | 1,368 | 8.3 s | 8.6 MB | 2 min 17 s |
+| 5 MB | 6,824 | 44 s | 43 MB | 11 min 22 s |
+
+Two consequences worth internalising:
+
+- **The animation is roughly 8.6x the size of the input.** Every byte becomes
+  QR modules rendered as pixels.
+- **Playback time, not render time, is the ceiling.** A 5 MB file is an
+  eleven-minute animation somebody has to hold a camera at without losing
+  focus. This is a tool for keys, configs, certificates, recovery phrases and
+  documents. It is not a way to move a video file.
+
+If the stream runs long, `--grid 4` packs four QR codes into each frame and
+cuts the frame count to roughly a quarter. `--fps 30` helps if both the
+display and the camera genuinely keep up.
+
+Separately, `npx` spends a few seconds cloning the repo before any of this
+starts, and shows its own spinner while it does. Output from the tool begins
+only after that.
+
 ## Things worth knowing
 
 **`--cycles` is the dial that matters.** One cycle is *k* systematic frames
