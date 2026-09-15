@@ -9824,7 +9824,7 @@ var { values, positionals } = parseArgs({
   strict: true
 });
 if (values.version) {
-  console.log("decimen-cli 1.0.0 (wire v3)");
+  console.log(`decimen-cli 1.0.0  build ${"bb464d1"} (${"2026-09-15"})  wire v3`);
   process.exit(0);
 }
 var [command, ...rest] = positionals;
