@@ -9779,6 +9779,15 @@ async function send(o) {
   const size = mib >= 1 ? `${mib.toFixed(1)} MiB` : `${(total / 1024).toFixed(1)} KiB`;
   log(`          ${result.frameCount} frames, ${result.width}x${result.height}, ${size}, ${formatDuration(playbackSeconds)} of playback`);
   log("");
+  if (o.format === "apng") {
+    log(`It is an animated PNG \u2014 all ${result.frameCount} frames are inside that one file,`);
+    log("looping forever. Open it in a web browser: many desktop image viewers show");
+    log("only the first frame, which will not transfer.");
+  } else {
+    log(`That is a ZIP of ${result.frameCount} numbered PNGs, one per frame, plus a note`);
+    log(`recording the ${o.fps} fps they are meant to be played at.`);
+  }
+  log("");
   log("Play it fullscreen and point decimen.app/receive at the screen.");
   return outPath;
 }
@@ -9795,7 +9804,7 @@ async function doctor() {
   console.log("");
   console.log("decimen doctor");
   console.log("");
-  line("cli", `${"1.0.3"}  build ${"f20c6f9"} (${"2026-09-15"})`);
+  line("cli", `${"1.0.4"}  build ${"acc0dd1"} (${"2026-09-15"})`);
   line("node", `${process.version}  ${process.platform} ${process.arch}`);
   line("wire format", `v${WIRE_VERSION}`);
   line("startup", `${Math.round(process.uptime() * 1e3)} ms from process start to here`);
@@ -9868,7 +9877,7 @@ async function doctor() {
     console.log("");
     console.log("  If a real run still feels slow to start, the delay is npm fetching the");
     console.log("  package, not this tool. Install it once instead:");
-    const v = "1.0.3";
+    const v = "1.0.4";
     console.log(`    npm install -g https://github.com/jackbauertv24-droid/decimen-cli/releases/download/v${v}/decimen-cli-${v}.tgz`);
   } else {
     console.log(`  ${failures} check${failures === 1 ? "" : "s"} failed \u2014 this install is not working.`);
@@ -9937,7 +9946,7 @@ var { values, positionals } = parseArgs({
   strict: true
 });
 if (values.version) {
-  console.log(`decimen-cli ${"1.0.3"}  build ${"f20c6f9"} (${"2026-09-15"})  wire v3`);
+  console.log(`decimen-cli ${"1.0.4"}  build ${"acc0dd1"} (${"2026-09-15"})  wire v3`);
   process.exit(0);
 }
 var [command, ...rest] = positionals;
