@@ -7,11 +7,14 @@ import { DEFAULT_FRAME_BYTES } from "../vendor/shared/send-settings.ts";
 import { exportAnimation, planExport, type ExportFormat } from "../vendor/send/export.ts";
 import type { EccLevel } from "../vendor/send/qr-frame.ts";
 import { mimeFor } from "./mime.ts";
+import { renderPlayer } from "./player.ts";
+
+export type SendFormat = ExportFormat | "html";
 
 export interface SendOptions {
   input: string;
   out?: string;
-  format: ExportFormat;
+  format: SendFormat;
   fps: number;
   scale: number;
   cycles: number;
@@ -22,7 +25,7 @@ export interface SendOptions {
 }
 
 export const SEND_DEFAULTS = {
-  format: "apng" as ExportFormat,
+  format: "html" as SendFormat,
   fps: 10,
   scale: 4,
   cycles: 2,
@@ -72,7 +75,7 @@ export async function send(o: SendOptions): Promise<string> {
     frameBytes: o.frameBytes,
     ecc: o.ecc,
     gridCodes: o.grid,
-    format: o.format,
+    format: o.format === "html" ? "apng" : o.format,
     fps: o.fps,
     scale: o.scale,
     cycles: o.cycles,
@@ -89,14 +92,36 @@ export async function send(o: SendOptions): Promise<string> {
   if (!result) throw new Error("export cancelled");
   if (!o.quiet) process.stderr.write("\r");
 
-  const outPath = o.out ?? `${o.input}.decimen.${result.extension}`;
-  await writeFile(outPath, Buffer.concat(result.parts));
-  const total = result.parts.reduce((n, p) => n + p.length, 0);
+  const apng = Buffer.concat(result.parts);
+  const isHtml = o.format === "html";
+  const body = isHtml
+    ? Buffer.from(
+        renderPlayer({
+          apng,
+          fileName: name,
+          frameCount: result.frameCount,
+          fps: o.fps,
+          width: result.width,
+          height: result.height,
+          playbackSeconds,
+        }),
+        "utf8",
+      )
+    : apng;
+  const outPath = o.out ?? `${o.input}.decimen.${isHtml ? "html" : result.extension}`;
+  await writeFile(outPath, body);
+  const total = body.length;
   log(`wrote     ${outPath}`);
   const mib = total / 1024 / 1024;
   const size = mib >= 1 ? `${mib.toFixed(1)} MiB` : `${(total / 1024).toFixed(1)} KiB`;
   log(`          ${result.frameCount} frames, ${result.width}x${result.height}, ${size}, ${formatDuration(playbackSeconds)} of playback`);
   log("");
+  if (isHtml) {
+    log("Open it — double-clicking plays the animation in your browser. Press F for");
+    log("fullscreen, then point decimen.app/receive at the screen. The stream loops,");
+    log("so a missed frame comes back around.");
+    return outPath;
+  }
   if (o.format === "apng") {
     // People reasonably read ".png" as "one picture". It is an animated PNG:
     // every frame is in that one file, and a viewer that ignores the animation

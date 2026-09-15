@@ -10,20 +10,26 @@ for (const stream of [process.stdout, process.stderr]) {
 }
 import { cameraSource, ffmpegFrames, framesFromPath } from "./frames.ts";
 import { receive } from "./receive.ts";
-import { SEND_DEFAULTS, send } from "./send.ts";
+import { SEND_DEFAULTS, send, type SendFormat } from "./send.ts";
 import { doctor } from "./doctor.ts";
-import type { ExportFormat } from "../vendor/send/export.ts";
+import { play } from "./play.ts";
 import type { EccLevel } from "../vendor/send/qr-frame.ts";
 
 const USAGE = `decimen — optical file transfer over animated QR, from the terminal
 
-  decimen send <file> [options]          render a file as a QR animation
+  decimen play <file> [options]          show the stream in THIS terminal, no browser
+  decimen send <file> [options]          write the stream to a file
   decimen receive <source> [options]     read a stream back into a file
   decimen doctor                         check this install works, no file needed
 
+play options — writes nothing, opens nothing
+      --fps <n>          frames per second           (default: ${SEND_DEFAULTS.fps})
+      --ecc <L|M|Q|H>    QR error correction         (default: ${SEND_DEFAULTS.ecc})
+      --frame-bytes <n>  wire bytes per QR    (default: the largest that fits)
+
 send options
-  -o, --out <path>       output file (default: <file>.decimen.png)
-      --format <fmt>     apng | zip                  (default: ${SEND_DEFAULTS.format})
+  -o, --out <path>       output file (default: <file>.decimen.html)
+      --format <fmt>     html | apng | zip           (default: ${SEND_DEFAULTS.format})
       --fps <n>          animation frame rate        (default: ${SEND_DEFAULTS.fps})
       --scale <n>        integer module upscale      (default: ${SEND_DEFAULTS.scale})
       --cycles <n>       carousel cycles, >=1        (default: ${SEND_DEFAULTS.cycles})
@@ -44,8 +50,8 @@ receive options
       --fps <n>          sample video/camera at n fps
       --symbols <n>      max QR codes per frame      (default: 4)
 
-Receiving also works with no install at all: play the animation fullscreen and
-point https://decimen.app/receive at it from a phone.`;
+The sending machine never needs a browser: "decimen play" draws the stream in
+the terminal. Receiving needs only a phone camera and decimen.app/receive.`;
 
 const { values, positionals } = parseArgs({
   allowPositionals: true,
@@ -99,14 +105,28 @@ function fail(message: string): never {
 const quiet = values.quiet ?? false;
 
 try {
-  if (command === "doctor") {
+  if (command === "play") {
+    const input = rest[0];
+    if (!input) fail("play needs a file — try: decimen play ./secrets.txt");
+    const ecc = (values.ecc ?? SEND_DEFAULTS.ecc).toUpperCase() as EccLevel;
+    if (!["L", "M", "Q", "H"].includes(ecc)) fail("--ecc must be L, M, Q or H");
+    await play({
+      input,
+      fps: num(values.fps, SEND_DEFAULTS.fps, "fps"),
+      ecc,
+      frameBytes: values["frame-bytes"] ? num(values["frame-bytes"], 0, "frame-bytes") : undefined,
+      quiet,
+    });
+  } else if (command === "doctor") {
     process.exit(await doctor());
   } else if (command === "send") {
     const input = rest[0];
     if (!input) fail("send needs a file — try: decimen send ./report.pdf");
 
-    const format = (values.format ?? SEND_DEFAULTS.format) as ExportFormat;
-    if (format !== "apng" && format !== "zip") fail("--format must be apng or zip");
+    const format = (values.format ?? SEND_DEFAULTS.format) as SendFormat;
+    if (format !== "apng" && format !== "zip" && format !== "html") {
+      fail("--format must be html, apng or zip");
+    }
     const ecc = (values.ecc ?? SEND_DEFAULTS.ecc).toUpperCase() as EccLevel;
     if (!["L", "M", "Q", "H"].includes(ecc)) fail("--ecc must be L, M, Q or H");
 
@@ -156,7 +176,7 @@ try {
     console.log(result.path);
     stop?.();
   } else {
-    fail(`unknown command "${command}" — expected send, receive or doctor`);
+    fail(`unknown command "${command}" — expected play, send, receive or doctor`);
   }
 } catch (e) {
   fail(e instanceof Error ? e.message : String(e));

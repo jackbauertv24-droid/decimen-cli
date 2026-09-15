@@ -5,6 +5,7 @@ import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
 import { mkdtemp, readFile, writeFile, readdir, rm, mkdir, copyFile } from "node:fs/promises";
 import { randomBytes, createHash } from "node:crypto";
+import { Buffer } from "node:buffer";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -22,7 +23,7 @@ test("round-trips an APNG stream byte-identically", async () => {
   const original = randomBytes(120_000); // incompressible: forces many blocks
   await writeFile(src, original);
 
-  run("send", src, "-o", join(dir, "stream.png"), "--cycles", "2", "--scale", "2", "-q");
+  run("send", src, "--format", "apng", "-o", join(dir, "stream.png"), "--cycles", "2", "--scale", "2", "-q");
   run("receive", join(dir, "stream.png"), "-o", join(dir, "out.bin"), "-q");
 
   assert.equal(sha(await readFile(join(dir, "out.bin"))), sha(original));
@@ -31,7 +32,7 @@ test("round-trips an APNG stream byte-identically", async () => {
 test("round-trips a small text file and preserves its name and type", async () => {
   const src = join(dir, "notes.txt");
   await writeFile(src, "decimen round trip\n".repeat(200));
-  run("send", src, "-o", join(dir, "notes.png"), "-q");
+  run("send", src, "--format", "apng", "-o", join(dir, "notes.png"), "-q");
   const out = run("receive", join(dir, "notes.png"), "-d", dir, "-q").trim();
   assert.ok(out.endsWith("notes.txt"), `expected the original filename, got ${out}`);
   assert.equal(sha(await readFile(out)), sha(await readFile(src)));
@@ -127,7 +128,7 @@ test("the single-file bundle works with nothing beside it", async () => {
     execFileSync(process.execPath, [join(solo, "decimen.mjs"), ...args], { encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] });
 
   assert.match(solorun("doctor"), /OK — sending and receiving both work/);
-  solorun("send", src, "-o", join(solo, "s.png"), "-q");
+  solorun("send", src, "--format", "apng", "-o", join(solo, "s.png"), "-q");
   solorun("receive", join(solo, "s.png"), "-o", join(solo, "out.bin"), "-q");
   assert.equal(sha(await readFile(join(solo, "out.bin"))), sha(original));
 });
@@ -136,7 +137,7 @@ test("the .png output is a multi-frame APNG, not a still image", async () => {
   const src = join(dir, "anim.bin");
   await writeFile(src, randomBytes(30_000));
   const out = join(dir, "anim.png");
-  run("send", src, "-o", out, "--cycles", "1", "--scale", "2", "-q");
+  run("send", src, "--format", "apng", "-o", out, "--cycles", "1", "--scale", "2", "-q");
 
   // Walk the chunks: acTL declares the animation, fcTL introduces each frame.
   const file = await readFile(out);
@@ -153,4 +154,29 @@ test("the .png output is a multi-frame APNG, not a still image", async () => {
   }
   assert.ok(acTLFrames > 1, `expected an animation, acTL declared ${acTLFrames} frames`);
   assert.equal(fcTL, acTLFrames, "every declared frame needs its own fcTL");
+});
+
+test("the HTML player carries an intact, decodable stream", async () => {
+  const src = join(dir, "player.bin");
+  const original = randomBytes(30_000);
+  await writeFile(src, original);
+  const out = join(dir, "player.html");
+  run("send", src, "--format", "html", "-o", out, "--cycles", "1", "--scale", "2", "-q");
+
+  const html = await readFile(out, "utf8");
+  assert.match(html, /<!doctype html>/i);
+  // Nearest-neighbour scaling: a smoothed QR loses module edges and stops decoding.
+  assert.match(html, /image-rendering:\s*pixelated/);
+  assert.match(html, /decimen\.app\/receive/);
+
+  // The animation must be embedded, not referenced: this file travels alone.
+  assert.doesNotMatch(html, /<img[^>]+src="(?!data:)/);
+  const embedded = html.match(/data:image\/png;base64,([A-Za-z0-9+/=]+)/);
+  assert.ok(embedded, "expected the APNG inline as a data URI");
+
+  // And it has to still be a working stream, not just bytes that look like one.
+  const apng = join(dir, "from-html.png");
+  await writeFile(apng, Buffer.from(embedded[1], "base64"));
+  run("receive", apng, "-o", join(dir, "from-html.bin"), "-q");
+  assert.equal(sha(await readFile(join(dir, "from-html.bin"))), sha(original));
 });
