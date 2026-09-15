@@ -9294,7 +9294,16 @@ import { readFile as readFile3, writeFile as writeFile2 } from "node:fs/promises
 import { basename as basename2, extname as extname2 } from "node:path";
 
 // vendor/shared/send-settings.ts
+var NO_SIGNAL_HINT_FRAME_BYTES = 1465;
 var DEFAULT_FRAME_BYTES = 2953;
+var FRAME_BYTES_OPTIONS = [
+  500,
+  1e3,
+  NO_SIGNAL_HINT_FRAME_BYTES,
+  1850,
+  2331,
+  DEFAULT_FRAME_BYTES
+];
 
 // vendor/shared/frame-capacity.ts
 function blockLength(frameBytes) {
@@ -9711,9 +9720,96 @@ function mimeFor(ext) {
   return MIME[ext.toLowerCase()] ?? "application/octet-stream";
 }
 
+// src/player.ts
+var escapeHtml = (s) => s.replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[c]);
+function renderPlayer(o) {
+  const dataUri = `data:image/png;base64,${Buffer.from(o.apng).toString("base64")}`;
+  const name = escapeHtml(o.fileName);
+  const duration = o.playbackSeconds < 60 ? `${Math.round(o.playbackSeconds)} s` : `${Math.floor(o.playbackSeconds / 60)} min ${Math.round(o.playbackSeconds % 60)} s`;
+  return `<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>${name} \u2014 Decimen stream</title>
+<style>
+  :root { color-scheme: dark; }
+  * { box-sizing: border-box; }
+  html, body { height: 100%; }
+  body {
+    margin: 0; background: #000; color: #e7e7e7;
+    font: 14px/1.5 ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+    display: flex; flex-direction: column; align-items: center; justify-content: center;
+    gap: 16px; padding: 16px; overflow: hidden;
+  }
+  /* Nearest-neighbour: a smoothed QR loses its module edges and stops decoding. */
+  img {
+    image-rendering: pixelated;
+    max-width: min(100%, 92vh); max-height: 92vh;
+    width: auto; height: auto; display: block;
+  }
+  #bar {
+    display: flex; align-items: center; gap: 12px; flex-wrap: wrap;
+    justify-content: center; max-width: 100%;
+  }
+  #meta { color: #8b8b8b; font-variant-numeric: tabular-nums; text-align: center; }
+  #meta b { color: #e7e7e7; font-weight: 600; }
+  button {
+    font: inherit; color: #e7e7e7; background: #1c1c1c;
+    border: 1px solid #333; border-radius: 8px; padding: 8px 14px; cursor: pointer;
+  }
+  button:hover { background: #262626; border-color: #4a4a4a; }
+  button:focus-visible { outline: 2px solid #6ea8fe; outline-offset: 2px; }
+  body.full { gap: 0; padding: 0; cursor: none; }
+  body.full #bar { display: none; }
+  body.full img { max-width: 100vw; max-height: 100vh; }
+  @media (max-width: 600px) { img { max-width: 100%; max-height: 70vh; } }
+</style>
+</head>
+<body>
+  <img id="stream" src="${dataUri}" alt="Animated QR stream for ${name}" width="${o.width}" height="${o.height}">
+  <div id="bar">
+    <button id="fs" type="button">Fullscreen</button>
+    <button id="restart" type="button">Restart</button>
+    <div id="meta">
+      <b>${name}</b> \xB7 ${o.frameCount} frames \xB7 ${o.fps} fps \xB7 one pass ${duration}
+      <br>Point <b>decimen.app/receive</b> at this screen. It loops, so a missed frame comes back.
+    </div>
+  </div>
+<script>
+  const img = document.getElementById("stream");
+  const body = document.body;
+
+  document.getElementById("fs").addEventListener("click", () => {
+    if (document.fullscreenElement) document.exitFullscreen();
+    else body.requestFullscreen?.().catch(() => {});
+  });
+
+  // Re-assigning src restarts the APNG from frame 1; the data URI is already
+  // in memory, so this costs no fetch.
+  const src = img.src;
+  document.getElementById("restart").addEventListener("click", () => {
+    img.src = "";
+    img.src = src;
+  });
+
+  document.addEventListener("fullscreenchange", () => {
+    body.classList.toggle("full", !!document.fullscreenElement);
+  });
+
+  document.addEventListener("keydown", (e) => {
+    if (e.key === "f" || e.key === "F") document.getElementById("fs").click();
+    if (e.key === "r" || e.key === "R") document.getElementById("restart").click();
+  });
+</script>
+</body>
+</html>
+`;
+}
+
 // src/send.ts
 var SEND_DEFAULTS = {
-  format: "apng",
+  format: "html",
   fps: 10,
   scale: 4,
   cycles: 2,
@@ -9755,7 +9851,7 @@ async function send(o) {
     frameBytes: o.frameBytes,
     ecc: o.ecc,
     gridCodes: o.grid,
-    format: o.format,
+    format: o.format === "html" ? "apng" : o.format,
     fps: o.fps,
     scale: o.scale,
     cycles: o.cycles,
@@ -9771,14 +9867,34 @@ async function send(o) {
   });
   if (!result) throw new Error("export cancelled");
   if (!o.quiet) process.stderr.write("\r");
-  const outPath = o.out ?? `${o.input}.decimen.${result.extension}`;
-  await writeFile2(outPath, Buffer.concat(result.parts));
-  const total = result.parts.reduce((n, p) => n + p.length, 0);
+  const apng = Buffer.concat(result.parts);
+  const isHtml = o.format === "html";
+  const body = isHtml ? Buffer.from(
+    renderPlayer({
+      apng,
+      fileName: name,
+      frameCount: result.frameCount,
+      fps: o.fps,
+      width: result.width,
+      height: result.height,
+      playbackSeconds
+    }),
+    "utf8"
+  ) : apng;
+  const outPath = o.out ?? `${o.input}.decimen.${isHtml ? "html" : result.extension}`;
+  await writeFile2(outPath, body);
+  const total = body.length;
   log(`wrote     ${outPath}`);
   const mib = total / 1024 / 1024;
   const size = mib >= 1 ? `${mib.toFixed(1)} MiB` : `${(total / 1024).toFixed(1)} KiB`;
   log(`          ${result.frameCount} frames, ${result.width}x${result.height}, ${size}, ${formatDuration(playbackSeconds)} of playback`);
   log("");
+  if (isHtml) {
+    log("Open it \u2014 double-clicking plays the animation in your browser. Press F for");
+    log("fullscreen, then point decimen.app/receive at the screen. The stream loops,");
+    log("so a missed frame comes back around.");
+    return outPath;
+  }
   if (o.format === "apng") {
     log(`It is an animated PNG \u2014 all ${result.frameCount} frames are inside that one file,`);
     log("looping forever. Open it in a web browser: many desktop image viewers show");
@@ -9804,7 +9920,7 @@ async function doctor() {
   console.log("");
   console.log("decimen doctor");
   console.log("");
-  line("cli", `${"1.0.4"}  build ${"acc0dd1"} (${"2026-09-15"})`);
+  line("cli", `${"1.1.0"}  build ${"6bd8820"} (${"2026-09-15"})`);
   line("node", `${process.version}  ${process.platform} ${process.arch}`);
   line("wire format", `v${WIRE_VERSION}`);
   line("startup", `${Math.round(process.uptime() * 1e3)} ms from process start to here`);
@@ -9877,13 +9993,160 @@ async function doctor() {
     console.log("");
     console.log("  If a real run still feels slow to start, the delay is npm fetching the");
     console.log("  package, not this tool. Install it once instead:");
-    const v = "1.0.4";
+    const v = "1.1.0";
     console.log(`    npm install -g https://github.com/jackbauertv24-droid/decimen-cli/releases/download/v${v}/decimen-cli-${v}.tgz`);
   } else {
     console.log(`  ${failures} check${failures === 1 ? "" : "s"} failed \u2014 this install is not working.`);
   }
   console.log("");
   return failures === 0 ? 0 : 1;
+}
+
+// src/play.ts
+import { readFile as readFile4 } from "node:fs/promises";
+import { basename as basename3, extname as extname3 } from "node:path";
+
+// src/terminal.ts
+function frameStream(payload, frameBytes, ecc, sessionId) {
+  const blockLen = blockLength(frameBytes);
+  const encoder = new LTEncoder(payload, blockLen, sessionId);
+  const header = {
+    sessionId,
+    seq: 0,
+    k: encoder.k,
+    blockLen,
+    totalLen: payload.length,
+    payloadFnv: fnv1a(payload),
+    flags: 0
+  };
+  let version;
+  let seq = 0;
+  return {
+    k: encoder.k,
+    next() {
+      const bytes = packFrame({ ...header, seq }, encoder.encode(seq));
+      const qr = createFrameQr(bytes, ecc, version);
+      version ??= qr.version;
+      return { size: qr.modules.size, data: qr.modules.data, seq: seq++, k: encoder.k };
+    }
+  };
+}
+var CELL = [
+  "\x1B[30;40m",
+  // both halves dark
+  "\x1B[97;40m",
+  // top light, bottom dark
+  "\x1B[30;107m",
+  // top dark, bottom light
+  "\x1B[97;107m"
+  // both halves light
+];
+function renderFrame(frame, quiet2 = QUIET_ZONE_MODULES) {
+  const span = frame.size + quiet2 * 2;
+  const at = (x, y) => {
+    const mx = x - quiet2;
+    const my = y - quiet2;
+    if (mx < 0 || my < 0 || mx >= frame.size || my >= frame.size) return 0;
+    return frame.data[my * frame.size + mx] ? 1 : 0;
+  };
+  const out = [];
+  for (let y = 0; y < span; y += 2) {
+    let row = "";
+    let run = -1;
+    let count = 0;
+    for (let x = 0; x < span; x++) {
+      const top = at(x, y);
+      const bottom = y + 1 < span ? at(x, y + 1) : 0;
+      const state = (top ? 0 : 1) | (bottom ? 0 : 2);
+      if (state === run) {
+        count++;
+      } else {
+        if (run >= 0) row += CELL[run] + "\u2580".repeat(count);
+        run = state;
+        count = 1;
+      }
+    }
+    if (run >= 0) row += CELL[run] + "\u2580".repeat(count);
+    out.push(row + "\x1B[0m");
+  }
+  return out.join("\n");
+}
+function fitFrameBytes(columns, rows, ecc) {
+  const probe = new Uint8Array(32);
+  for (const candidate of [...FRAME_BYTES_OPTIONS].sort((a, b) => b - a)) {
+    const blockLen = blockLength(candidate);
+    const bytes = new Uint8Array(22 + blockLen);
+    bytes.set(probe.subarray(0, Math.min(probe.length, bytes.length)));
+    let size;
+    try {
+      size = createFrameQr(bytes, ecc, void 0).modules.size;
+    } catch {
+      continue;
+    }
+    const span = size + QUIET_ZONE_MODULES * 2;
+    if (span <= columns && Math.ceil(span / 2) <= rows) return candidate;
+  }
+  return null;
+}
+
+// src/play.ts
+var HIDE_CURSOR = "\x1B[?25l";
+var SHOW_CURSOR = "\x1B[?25h";
+var CLEAR = "\x1B[2J\x1B[H";
+var HOME = "\x1B[H";
+async function play(o) {
+  const columns = process.stdout.columns ?? (Number(process.env.COLUMNS) || 80);
+  const rows = process.stdout.rows ?? (Number(process.env.LINES) || 24);
+  const frameBytes = o.frameBytes ?? fitFrameBytes(columns, rows - 1, o.ecc);
+  if (frameBytes === null) {
+    throw new Error(
+      `this terminal is ${columns}x${rows}; the smallest QR needs about 93x48. Maximise the window or reduce the font size, then run it again.`
+    );
+  }
+  const bytes = new Uint8Array(await readFile4(o.input));
+  const name = basename3(o.input);
+  const packed = await packFile(name, mimeFor(extname3(o.input)), bytes);
+  const stream = frameStream(packed.container, frameBytes, o.ecc, Math.random() * 65536 | 0);
+  const perCycle = cycleLength(stream.k);
+  if (!o.quiet) {
+    process.stderr.write(
+      `playing ${name} \u2014 ${bytes.length} B, k=${stream.k}, ${frameBytes} B/frame at ${o.fps} fps
+one full pass every ${(perCycle / o.fps).toFixed(1)} s; it loops until you press Ctrl-C
+
+point decimen.app/receive at this screen
+`
+    );
+    await new Promise((r) => setTimeout(r, 1200));
+  }
+  let stop = false;
+  const restore = () => {
+    process.stdout.write(SHOW_CURSOR + "\x1B[0m\n");
+  };
+  const onSignal = () => {
+    stop = true;
+    restore();
+    process.exit(0);
+  };
+  process.on("SIGINT", onSignal);
+  process.on("SIGTERM", onSignal);
+  process.stdout.write(HIDE_CURSOR + CLEAR);
+  const interval = 1e3 / o.fps;
+  let shown = 0;
+  let next = Date.now();
+  try {
+    while (!stop) {
+      const frame = stream.next();
+      const status = o.quiet ? "" : `\x1B[0m frame ${frame.seq + 1}  pass ${Math.floor(shown / perCycle) + 1}  ${o.fps} fps  Ctrl-C to stop`;
+      process.stdout.write(HOME + renderFrame(frame) + "\n" + status);
+      shown++;
+      next += interval;
+      const wait = next - Date.now();
+      if (wait > 0) await new Promise((r) => setTimeout(r, wait));
+      else next = Date.now();
+    }
+  } finally {
+    restore();
+  }
 }
 
 // src/cli.ts
@@ -9895,13 +10158,19 @@ for (const stream of [process.stdout, process.stderr]) {
 }
 var USAGE = `decimen \u2014 optical file transfer over animated QR, from the terminal
 
-  decimen send <file> [options]          render a file as a QR animation
+  decimen play <file> [options]          show the stream in THIS terminal, no browser
+  decimen send <file> [options]          write the stream to a file
   decimen receive <source> [options]     read a stream back into a file
   decimen doctor                         check this install works, no file needed
 
+play options \u2014 writes nothing, opens nothing
+      --fps <n>          frames per second           (default: ${SEND_DEFAULTS.fps})
+      --ecc <L|M|Q|H>    QR error correction         (default: ${SEND_DEFAULTS.ecc})
+      --frame-bytes <n>  wire bytes per QR    (default: the largest that fits)
+
 send options
-  -o, --out <path>       output file (default: <file>.decimen.png)
-      --format <fmt>     apng | zip                  (default: ${SEND_DEFAULTS.format})
+  -o, --out <path>       output file (default: <file>.decimen.html)
+      --format <fmt>     html | apng | zip           (default: ${SEND_DEFAULTS.format})
       --fps <n>          animation frame rate        (default: ${SEND_DEFAULTS.fps})
       --scale <n>        integer module upscale      (default: ${SEND_DEFAULTS.scale})
       --cycles <n>       carousel cycles, >=1        (default: ${SEND_DEFAULTS.cycles})
@@ -9922,8 +10191,8 @@ receive options
       --fps <n>          sample video/camera at n fps
       --symbols <n>      max QR codes per frame      (default: 4)
 
-Receiving also works with no install at all: play the animation fullscreen and
-point https://decimen.app/receive at it from a phone.`;
+The sending machine never needs a browser: "decimen play" draws the stream in
+the terminal. Receiving needs only a phone camera and decimen.app/receive.`;
 var { values, positionals } = parseArgs({
   allowPositionals: true,
   options: {
@@ -9946,7 +10215,7 @@ var { values, positionals } = parseArgs({
   strict: true
 });
 if (values.version) {
-  console.log(`decimen-cli ${"1.0.4"}  build ${"acc0dd1"} (${"2026-09-15"})  wire v3`);
+  console.log(`decimen-cli ${"1.1.0"}  build ${"6bd8820"} (${"2026-09-15"})  wire v3`);
   process.exit(0);
 }
 var [command, ...rest] = positionals;
@@ -9966,13 +10235,27 @@ function fail(message) {
 }
 var quiet = values.quiet ?? false;
 try {
-  if (command === "doctor") {
+  if (command === "play") {
+    const input = rest[0];
+    if (!input) fail("play needs a file \u2014 try: decimen play ./secrets.txt");
+    const ecc = (values.ecc ?? SEND_DEFAULTS.ecc).toUpperCase();
+    if (!["L", "M", "Q", "H"].includes(ecc)) fail("--ecc must be L, M, Q or H");
+    await play({
+      input,
+      fps: num(values.fps, SEND_DEFAULTS.fps, "fps"),
+      ecc,
+      frameBytes: values["frame-bytes"] ? num(values["frame-bytes"], 0, "frame-bytes") : void 0,
+      quiet
+    });
+  } else if (command === "doctor") {
     process.exit(await doctor());
   } else if (command === "send") {
     const input = rest[0];
     if (!input) fail("send needs a file \u2014 try: decimen send ./report.pdf");
     const format = values.format ?? SEND_DEFAULTS.format;
-    if (format !== "apng" && format !== "zip") fail("--format must be apng or zip");
+    if (format !== "apng" && format !== "zip" && format !== "html") {
+      fail("--format must be html, apng or zip");
+    }
     const ecc = (values.ecc ?? SEND_DEFAULTS.ecc).toUpperCase();
     if (!["L", "M", "Q", "H"].includes(ecc)) fail("--ecc must be L, M, Q or H");
     await send({
@@ -10019,7 +10302,7 @@ try {
     console.log(result.path);
     stop?.();
   } else {
-    fail(`unknown command "${command}" \u2014 expected send, receive or doctor`);
+    fail(`unknown command "${command}" \u2014 expected play, send, receive or doctor`);
   }
 } catch (e) {
   fail(e instanceof Error ? e.message : String(e));
