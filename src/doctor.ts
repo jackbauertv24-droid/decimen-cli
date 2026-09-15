@@ -115,7 +115,8 @@ export async function doctor(): Promise<number> {
     console.log("");
     console.log("  If a real run still feels slow to start, the delay is npm fetching the");
     console.log("  package, not this tool. Install it once instead:");
-    console.log("    npm install -g https://github.com/jackbauertv24-droid/decimen-cli/releases/download/v1.0.0/decimen-cli-1.0.0.tgz");
+    const v = __PKG_VERSION__;
+    console.log(`    npm install -g https://github.com/jackbauertv24-droid/decimen-cli/releases/download/v${v}/decimen-cli-${v}.tgz`);
   } else {
     console.log(`  ${failures} check${failures === 1 ? "" : "s"} failed — this install is not working.`);
   }
