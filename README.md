@@ -20,7 +20,7 @@ between the two devices, no pairing, no account, no upload.
 Anything with Node 20+ on it, no install step, no clone:
 
 ```sh
-npx -y https://github.com/jackbauertv24-droid/decimen-cli/releases/download/v1.0.0/decimen-cli-1.0.0.tgz send ./report.pdf
+npx -y https://github.com/jackbauertv24-droid/decimen-cli/releases/download/v1.0.2/decimen-cli-1.0.2.tgz send ./report.pdf
 ```
 
 That writes `report.pdf.decimen.png` — an APNG. Play it fullscreen and point a
@@ -31,7 +31,7 @@ there is nothing to compile and nothing else to download.
 Install it properly if you will use it more than once:
 
 ```sh
-npm install -g https://github.com/jackbauertv24-droid/decimen-cli/releases/download/v1.0.0/decimen-cli-1.0.0.tgz
+npm install -g https://github.com/jackbauertv24-droid/decimen-cli/releases/download/v1.0.2/decimen-cli-1.0.2.tgz
 decimen send ./report.pdf
 ```
 
@@ -55,7 +55,7 @@ through the real WASM decoder and compares SHA-256:
 ```
 $ decimen doctor
 
-  cli           1.0.1  build bcdc4ab (2026-09-15)
+  cli           1.0.2  build 9d171f9 (2026-09-15)
   node          v24.19.0  linux x64
   wire format   v3
   startup       62 ms from process start to here
