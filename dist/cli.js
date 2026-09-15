@@ -3399,11 +3399,11 @@ var require_dijkstra = __commonJS({
         var predecessors = {};
         var costs = {};
         costs[s] = 0;
-        var open = dijkstra.PriorityQueue.make();
-        open.push(s, 0);
+        var open2 = dijkstra.PriorityQueue.make();
+        open2.push(s, 0);
         var closest, u, v, cost_of_s_to_u, adjacent_nodes, cost_of_e, cost_of_s_to_u_plus_cost_of_e, cost_of_s_to_v, first_visit;
-        while (!open.empty()) {
-          closest = open.pop();
+        while (!open2.empty()) {
+          closest = open2.pop();
           u = closest.value;
           cost_of_s_to_u = closest.cost;
           adjacent_nodes = graph[u] || {};
@@ -3415,7 +3415,7 @@ var require_dijkstra = __commonJS({
               first_visit = typeof costs[v] === "undefined";
               if (first_visit || cost_of_s_to_v > cost_of_s_to_u_plus_cost_of_e) {
                 costs[v] = cost_of_s_to_u_plus_cost_of_e;
-                open.push(v, cost_of_s_to_u_plus_cost_of_e);
+                open2.push(v, cost_of_s_to_u_plus_cost_of_e);
                 predecessors[v] = u;
               }
             }
@@ -6806,8 +6806,9 @@ async function framesFromPath(path, fps) {
 }
 
 // src/receive.ts
-import { writeFile } from "node:fs/promises";
+import { readFile as readFile3, readdir as readdir2, unlink, writeFile } from "node:fs/promises";
 import { join as join3, basename } from "node:path";
+import { createHash } from "node:crypto";
 
 // vendor/shared/optical-error.ts
 var ENGLISH_ERRORS = {
@@ -9216,6 +9217,26 @@ function loadCodec() {
   })();
   return cached;
 }
+function readSymbols(zx, frame, maxSymbols) {
+  const bytes = frame.width * frame.height * 4;
+  const ptr = zx._malloc(bytes);
+  try {
+    zx.HEAPU8.set(frame.data.subarray(0, bytes), ptr);
+    const vec = zx.readFull(ptr, frame.width, frame.height, true, maxSymbols, false);
+    try {
+      const out = [];
+      for (let i = 0; i < vec.size(); i++) {
+        const r = vec.get(i);
+        if (r.valid && r.bytes.length > 0) out.push({ bytes: new Uint8Array(r.bytes), modules: r.modules });
+      }
+      return out;
+    } finally {
+      vec.delete();
+    }
+  } finally {
+    zx._free(ptr);
+  }
+}
 function readFrame(zx, frame, maxSymbols) {
   const bytes = frame.width * frame.height * 4;
   const ptr = zx._malloc(bytes);
@@ -9238,6 +9259,39 @@ function readFrame(zx, frame, maxSymbols) {
 }
 
 // src/receive.ts
+var PART_NAME = /^(.+)\.([0-9a-f]{8})\.p(\d+)of(\d+)$/;
+function parsePartName(name) {
+  const m = PART_NAME.exec(name);
+  if (!m) return null;
+  return { base: m[1], runId: m[2], index: Number(m[3]), total: Number(m[4]) };
+}
+async function tryJoin(dir, part, log) {
+  const found = /* @__PURE__ */ new Map();
+  for (const entry of await readdir2(dir)) {
+    const p = parsePartName(entry);
+    if (p && p.base === part.base && p.runId === part.runId && p.total === part.total) found.set(p.index, entry);
+  }
+  if (found.size < part.total) return { have: found.size };
+  const chunks = [];
+  for (let i = 1; i <= part.total; i++) {
+    const entry = found.get(i);
+    if (!entry) return { have: found.size };
+    chunks.push(await readFile3(join3(dir, entry)));
+  }
+  const whole = Buffer.concat(chunks);
+  const digest2 = createHash("sha256").update(whole).digest("hex");
+  if (!digest2.startsWith(part.runId)) {
+    throw new Error(
+      `parts do not belong together: names say run ${part.runId}, the joined bytes hash to ${digest2.slice(0, 8)}`
+    );
+  }
+  const out = join3(dir, part.base);
+  await writeFile(out, whole);
+  for (const entry of found.values()) await unlink(join3(dir, entry));
+  log(`joined    ${part.total} parts -> ${part.base} (${whole.length} B), SHA-256 ${digest2.slice(0, 16)}...
+`);
+  return { joined: out, have: found.size };
+}
 async function receive(o) {
   const zx = await loadCodec();
   let decoder = null;
@@ -9272,9 +9326,25 @@ stream    session ${header.sessionId}, k=${header.k}, ${header.totalLen} B paylo
         const container = decoder.assemble();
         const file = await unpackFile(container);
         if (!await verifyFile(file)) throw new Error("SHA-256 mismatch \u2014 the reassembled file is corrupt");
+        log("\n");
+        const part = o.out ? null : parsePartName(file.name);
+        if (part) {
+          const path2 = join3(o.outDir, file.name);
+          await writeFile(path2, file.bytes);
+          const { joined, have } = await tryJoin(o.outDir, part, log);
+          return {
+            path: path2,
+            name: file.name,
+            type: file.type,
+            size: file.bytes.length,
+            framesSeen,
+            framesUsed,
+            part: { index: part.index, total: part.total, have },
+            joined
+          };
+        }
         const path = o.out ?? join3(o.outDir, basename(file.name) || "received.bin");
         await writeFile(path, file.bytes);
-        log("\n");
         return { path, name: file.name, type: file.type, size: file.bytes.length, framesSeen, framesUsed };
       }
     }
@@ -9290,8 +9360,9 @@ stream    session ${header.sessionId}, k=${header.k}, ${header.totalLen} B paylo
 }
 
 // src/send.ts
-import { readFile as readFile3, writeFile as writeFile2 } from "node:fs/promises";
+import { readFile as readFile4, writeFile as writeFile2 } from "node:fs/promises";
 import { basename as basename2, extname as extname2 } from "node:path";
+import { createHash as createHash2 } from "node:crypto";
 
 // vendor/shared/send-settings.ts
 var NO_SIGNAL_HINT_FRAME_BYTES = 1465;
@@ -9808,6 +9879,15 @@ function renderPlayer(o) {
 }
 
 // src/send.ts
+function partLabel(i, n) {
+  const w = String(n).length;
+  return `p${String(i).padStart(w, "0")}of${String(n).padStart(w, "0")}`;
+}
+function autoSplitBytes(seconds, frameBytes, fps, cycles, grid) {
+  const blockLen = blockLength(frameBytes);
+  const k = Math.max(1, Math.floor(seconds * fps * grid / (2 * cycles)));
+  return Math.max(blockLen, k * blockLen);
+}
 var SEND_DEFAULTS = {
   format: "html",
   fps: 10,
@@ -9825,9 +9905,12 @@ function formatDuration(seconds) {
   return rest2 === 0 ? `${m} min` : `${m} min ${rest2} s`;
 }
 async function send(o) {
-  const bytes = new Uint8Array(await readFile3(o.input));
+  const bytes = new Uint8Array(await readFile4(o.input));
   const name = basename2(o.input);
   const type = mimeFor(extname2(o.input));
+  if (o.split !== void 0 && bytes.length > o.split) {
+    return sendSplit(o, bytes, name, type);
+  }
   const packed = await packFile(name, type, bytes);
   const plan = planExport(packed.container.length, o.frameBytes, o.grid, o.cycles);
   const log = o.quiet ? () => {
@@ -9866,7 +9949,7 @@ async function send(o) {
     }
   });
   if (!result) throw new Error("export cancelled");
-  if (!o.quiet) process.stderr.write("\r");
+  if (!o.quiet) process.stderr.write("\r\x1B[2K");
   const apng = Buffer.concat(result.parts);
   const isHtml = o.format === "html";
   const body = isHtml ? Buffer.from(
@@ -9907,10 +9990,68 @@ async function send(o) {
   log("Play it fullscreen and point decimen.app/receive at the screen.");
   return outPath;
 }
+async function sendSplit(o, bytes, name, type) {
+  const log = o.quiet ? () => {
+  } : (s) => console.error(s);
+  const runId = createHash2("sha256").update(bytes).digest("hex").slice(0, 8);
+  const total = Math.ceil(bytes.length / o.split);
+  const ext = o.format === "html" ? "html" : o.format === "zip" ? "zip" : "png";
+  const base = (o.out ?? `${o.input}.decimen`).replace(/\.(png|zip|html)$/i, "");
+  log(`file      ${name} (${type})`);
+  log(`size      ${bytes.length} B -> ${total} parts of up to ${o.split} B  [run ${runId}]`);
+  log("");
+  const written = [];
+  let playback = 0;
+  for (let i = 1; i <= total; i++) {
+    const chunk = bytes.subarray((i - 1) * o.split, Math.min(i * o.split, bytes.length));
+    const label = partLabel(i, total);
+    const packed = await packFile(`${name}.${runId}.${label}`, type, chunk);
+    const plan = planExport(packed.container.length, o.frameBytes, o.grid, o.cycles);
+    const seconds = plan.animationFrames / o.fps;
+    playback += seconds;
+    const result = await exportAnimation({
+      payload: packed.container,
+      frameBytes: o.frameBytes,
+      ecc: o.ecc,
+      gridCodes: o.grid,
+      format: o.format === "html" ? "apng" : o.format,
+      fps: o.fps,
+      scale: o.scale,
+      cycles: o.cycles,
+      sessionId: Math.random() * 65536 | 0,
+      onProgress: (done, totalFrames) => {
+        if (o.quiet || done !== totalFrames && done % 20 !== 0) return;
+        process.stderr.write(`\rpart ${i}/${total}  render ${done}/${totalFrames}          `);
+      }
+    });
+    if (!result) throw new Error("export cancelled");
+    if (!o.quiet) process.stderr.write("\r\x1B[2K");
+    const apng = Buffer.concat(result.parts);
+    const body = o.format === "html" ? Buffer.from(renderPlayer({
+      apng,
+      fileName: `${name} (${label})`,
+      frameCount: result.frameCount,
+      fps: o.fps,
+      width: result.width,
+      height: result.height,
+      playbackSeconds: seconds
+    }), "utf8") : apng;
+    const path = `${base}.${label}.${ext}`;
+    await writeFile2(path, body);
+    written.push(path);
+    log(`part ${i}/${total}  ${chunk.length} B -> ${result.frameCount} frames, ${(body.length / 1024).toFixed(0)} KiB, ${formatDuration(seconds)}`);
+  }
+  log("");
+  log(`wrote     ${total} parts, ${formatDuration(playback)} of playback in total`);
+  log("");
+  log("Show them one at a time. decimen receive reassembles the original once every");
+  log("part has arrived \u2014 the parts carry their own order and checksums.");
+  return written[0];
+}
 
 // src/doctor.ts
 import { spawnSync } from "node:child_process";
-import { createHash } from "node:crypto";
+import { createHash as createHash3 } from "node:crypto";
 var line = (label, value) => console.log(`  ${label.padEnd(14)}${value}`);
 function since(start) {
   const elapsed = Number(process.hrtime.bigint() - start) / 1e6;
@@ -9920,7 +10061,7 @@ async function doctor() {
   console.log("");
   console.log("decimen doctor");
   console.log("");
-  line("cli", `${"1.1.0"}  build ${"6bd8820"} (${"2026-09-15"})`);
+  line("cli", `${"1.2.0"}  build ${"32edf2b"} (${"2026-09-15"})`);
   line("node", `${process.version}  ${process.platform} ${process.arch}`);
   line("wire format", `v${WIRE_VERSION}`);
   line("startup", `${Math.round(process.uptime() * 1e3)} ms from process start to here`);
@@ -9979,7 +10120,7 @@ async function doctor() {
     if (!decoder?.isComplete) throw new Error(`decoded ${symbols} symbols but could not reassemble`);
     line("  decode", `${since(tDec)}  (${symbols} symbol${symbols === 1 ? "" : "s"} read)`);
     const file = await unpackFile(decoder.assemble());
-    const sha = (b) => createHash("sha256").update(b).digest("hex");
+    const sha = (b) => createHash3("sha256").update(b).digest("hex");
     const matches = sha(file.bytes) === sha(new Uint8Array(original)) && await verifyFile(file);
     line("  sha-256", matches ? "match" : "MISMATCH");
     if (!matches) failures++;
@@ -9993,7 +10134,7 @@ async function doctor() {
     console.log("");
     console.log("  If a real run still feels slow to start, the delay is npm fetching the");
     console.log("  package, not this tool. Install it once instead:");
-    const v = "1.1.0";
+    const v = "1.2.0";
     console.log(`    npm install -g https://github.com/jackbauertv24-droid/decimen-cli/releases/download/v${v}/decimen-cli-${v}.tgz`);
   } else {
     console.log(`  ${failures} check${failures === 1 ? "" : "s"} failed \u2014 this install is not working.`);
@@ -10003,7 +10144,7 @@ async function doctor() {
 }
 
 // src/play.ts
-import { readFile as readFile4 } from "node:fs/promises";
+import { open, readFile as readFile5, stat as stat2 } from "node:fs/promises";
 import { basename as basename3, extname as extname3 } from "node:path";
 
 // src/terminal.ts
@@ -10043,20 +10184,25 @@ var CELL = [
 ];
 function renderFrame(frame, quiet2 = QUIET_ZONE_MODULES) {
   const span = frame.size + quiet2 * 2;
-  const at = (x, y) => {
+  return renderGrid(span, span, (x, y) => {
     const mx = x - quiet2;
     const my = y - quiet2;
     if (mx < 0 || my < 0 || mx >= frame.size || my >= frame.size) return 0;
     return frame.data[my * frame.size + mx] ? 1 : 0;
-  };
+  });
+}
+function renderModules(g) {
+  return renderGrid(g.width, g.height, (x, y) => g.grid[y * g.width + x] ? 1 : 0);
+}
+function renderGrid(spanX, spanY, at) {
   const out = [];
-  for (let y = 0; y < span; y += 2) {
+  for (let y = 0; y < spanY; y += 2) {
     let row = "";
     let run = -1;
     let count = 0;
-    for (let x = 0; x < span; x++) {
+    for (let x = 0; x < spanX; x++) {
       const top = at(x, y);
-      const bottom = y + 1 < span ? at(x, y + 1) : 0;
+      const bottom = y + 1 < spanY ? at(x, y + 1) : 0;
       const state = (top ? 0 : 1) | (bottom ? 0 : 2);
       if (state === run) {
         count++;
@@ -10070,6 +10216,26 @@ function renderFrame(frame, quiet2 = QUIET_ZONE_MODULES) {
     out.push(row + "\x1B[0m");
   }
   return out.join("\n");
+}
+function rasterToModules(data, width, height, scale) {
+  const cols = Math.floor(width / scale);
+  const rows = Math.floor(height / scale);
+  const half = scale >> 1;
+  const grid = new Uint8Array(cols * rows);
+  for (let y = 0; y < rows; y++) {
+    const py = y * scale + half;
+    for (let x = 0; x < cols; x++) {
+      const px = x * scale + half;
+      grid[y * cols + x] = data[(py * width + px) * 4] < 128 ? 1 : 0;
+    }
+  }
+  return { grid, width: cols, height: rows };
+}
+function scaleFromGeometry(height, modules, quiet2 = QUIET_ZONE_MODULES) {
+  const span = modules + quiet2 * 2;
+  if (span <= 0 || height % span !== 0) return null;
+  const scale = height / span;
+  return scale >= 1 ? scale : null;
 }
 function fitFrameBytes(columns, rows, ecc) {
   const probe = new Uint8Array(32);
@@ -10094,34 +10260,88 @@ var HIDE_CURSOR = "\x1B[?25l";
 var SHOW_CURSOR = "\x1B[?25h";
 var CLEAR = "\x1B[2J\x1B[H";
 var HOME = "\x1B[H";
+var PNG_SIG2 = Buffer.from([137, 80, 78, 71, 13, 10, 26, 10]);
+async function isExistingStream(path) {
+  const info = await stat2(path);
+  if (info.isDirectory()) return true;
+  const handle = await open(path, "r");
+  try {
+    const head = Buffer.alloc(8);
+    await handle.read(head, 0, 8, 0);
+    return head.equals(PNG_SIG2);
+  } finally {
+    await handle.close();
+  }
+}
 async function play(o) {
   const columns = process.stdout.columns ?? (Number(process.env.COLUMNS) || 80);
   const rows = process.stdout.rows ?? (Number(process.env.LINES) || 24);
+  const log = o.quiet ? () => {
+  } : (s) => process.stderr.write(s);
+  const frames = await isExistingStream(o.input) ? await loadStream(o.input, columns, rows, log) : await encodeStream(o, columns, rows, log);
+  await renderLoop(frames, o, log);
+}
+async function encodeStream(o, columns, rows, log) {
   const frameBytes = o.frameBytes ?? fitFrameBytes(columns, rows - 1, o.ecc);
   if (frameBytes === null) {
     throw new Error(
       `this terminal is ${columns}x${rows}; the smallest QR needs about 93x48. Maximise the window or reduce the font size, then run it again.`
     );
   }
-  const bytes = new Uint8Array(await readFile4(o.input));
+  const bytes = new Uint8Array(await readFile5(o.input));
   const name = basename3(o.input);
   const packed = await packFile(name, mimeFor(extname3(o.input)), bytes);
   const stream = frameStream(packed.container, frameBytes, o.ecc, Math.random() * 65536 | 0);
   const perCycle = cycleLength(stream.k);
-  if (!o.quiet) {
-    process.stderr.write(
-      `playing ${name} \u2014 ${bytes.length} B, k=${stream.k}, ${frameBytes} B/frame at ${o.fps} fps
+  log(
+    `playing ${name} \u2014 ${bytes.length} B, k=${stream.k}, ${frameBytes} B/frame at ${o.fps} fps
 one full pass every ${(perCycle / o.fps).toFixed(1)} s; it loops until you press Ctrl-C
 
 point decimen.app/receive at this screen
 `
-    );
-    await new Promise((r) => setTimeout(r, 1200));
+  );
+  return { perCycle, next: () => renderFrame(stream.next()) };
+}
+async function loadStream(path, columns, rows, log) {
+  log(`reading ${basename3(path)}...
+`);
+  const rasters = [];
+  for await (const frame of await framesFromPath(path)) rasters.push(frame);
+  if (rasters.length === 0) throw new Error(`no frames found in ${path}`);
+  const zx = await loadCodec();
+  const first = rasters[0];
+  const symbols = readSymbols(zx, first, 4);
+  if (symbols.length === 0) {
+    throw new Error("could not read a QR code from the first frame \u2014 is this a decimen stream?");
   }
+  const modules = symbols[0].modules;
+  const scale = scaleFromGeometry(first.height, modules, 4);
+  if (scale === null) {
+    throw new Error(
+      `frame is ${first.width}x${first.height} but the symbol is ${modules} modules; the upscale factor is not a whole number, so this raster cannot be replayed exactly.`
+    );
+  }
+  const grids = rasters.map((r) => rasterToModules(r.data, r.width, r.height, scale));
+  const { width, height } = grids[0];
+  const needRows = Math.ceil(height / 2) + 1;
+  if (width > columns || needRows > rows) {
+    throw new Error(
+      `this stream needs ${width}x${needRows} of terminal and you have ${columns}x${rows}. Maximise the window or reduce the font size.`
+    );
+  }
+  log(
+    `${rasters.length} frames, ${modules} modules at scale ${scale} (${first.width}x${first.height} px) -> ${width}x${needRows} cells
+it loops until you press Ctrl-C; point decimen.app/receive at this screen
+`
+  );
+  const drawn = grids.map((g) => renderModules(g));
+  let i = 0;
+  return { perCycle: drawn.length, next: () => drawn[i++ % drawn.length] };
+}
+async function renderLoop(frames, o, log) {
+  if (!o.quiet) await new Promise((r) => setTimeout(r, 1200));
   let stop = false;
-  const restore = () => {
-    process.stdout.write(SHOW_CURSOR + "\x1B[0m\n");
-  };
+  const restore = () => process.stdout.write(SHOW_CURSOR + "\x1B[0m\n");
   const onSignal = () => {
     stop = true;
     restore();
@@ -10135,9 +10355,8 @@ point decimen.app/receive at this screen
   let next = Date.now();
   try {
     while (!stop) {
-      const frame = stream.next();
-      const status = o.quiet ? "" : `\x1B[0m frame ${frame.seq + 1}  pass ${Math.floor(shown / perCycle) + 1}  ${o.fps} fps  Ctrl-C to stop`;
-      process.stdout.write(HOME + renderFrame(frame) + "\n" + status);
+      const status = o.quiet ? "" : `\x1B[0m frame ${shown % frames.perCycle + 1}/${frames.perCycle}  pass ${Math.floor(shown / frames.perCycle) + 1}  ${o.fps} fps  Ctrl-C to stop`;
+      process.stdout.write(HOME + frames.next() + "\n" + status);
       shown++;
       next += interval;
       const wait = next - Date.now();
@@ -10158,10 +10377,13 @@ for (const stream of [process.stdout, process.stderr]) {
 }
 var USAGE = `decimen \u2014 optical file transfer over animated QR, from the terminal
 
-  decimen play <file> [options]          show the stream in THIS terminal, no browser
+  decimen play <file|stream> [options]   show a stream in THIS terminal, no browser
   decimen send <file> [options]          write the stream to a file
   decimen receive <source> [options]     read a stream back into a file
   decimen doctor                         check this install works, no file needed
+
+play accepts either a source file (encoded live) or a stream already produced by
+send \u2014 an APNG or a directory of frames \u2014 which is replayed as-is.
 
 play options \u2014 writes nothing, opens nothing
       --fps <n>          frames per second           (default: ${SEND_DEFAULTS.fps})
@@ -10177,6 +10399,7 @@ send options
       --ecc <L|M|Q|H>    QR error correction         (default: ${SEND_DEFAULTS.ecc})
       --grid <n>         QR codes per frame          (default: ${SEND_DEFAULTS.grid})
       --frame-bytes <n>  wire bytes per QR           (default: ${SEND_DEFAULTS.frameBytes})
+      --split <size>     split into parts: 500k, 2M, 60s, or auto
 
 receive sources
   <dir>                  a directory of .png frames
@@ -10205,6 +10428,7 @@ var { values, positionals } = parseArgs({
     ecc: { type: "string" },
     grid: { type: "string" },
     "frame-bytes": { type: "string" },
+    split: { type: "string" },
     symbols: { type: "string" },
     camera: { type: "boolean" },
     device: { type: "string" },
@@ -10215,7 +10439,7 @@ var { values, positionals } = parseArgs({
   strict: true
 });
 if (values.version) {
-  console.log(`decimen-cli ${"1.1.0"}  build ${"6bd8820"} (${"2026-09-15"})  wire v3`);
+  console.log(`decimen-cli ${"1.2.0"}  build ${"32edf2b"} (${"2026-09-15"})  wire v3`);
   process.exit(0);
 }
 var [command, ...rest] = positionals;
@@ -10228,6 +10452,25 @@ function num(raw, fallback, label) {
   const n = Number(raw);
   if (!Number.isFinite(n) || n <= 0) fail(`--${label} must be a positive number`);
   return n;
+}
+function parseSplit(raw) {
+  const t = raw.trim().toLowerCase();
+  if (t === "auto") return { seconds: 60 };
+  const m = /^(\d+(?:\.\d+)?)([kmgs]?)$/.exec(t);
+  if (!m) fail(`--split wants a size like 500k or 2M, a duration like 60s, or auto \u2014 got "${raw}"`);
+  const n = Number(m[1]);
+  switch (m[2]) {
+    case "s":
+      return { seconds: n };
+    case "k":
+      return { bytes: Math.round(n * 1024) };
+    case "m":
+      return { bytes: Math.round(n * 1024 * 1024) };
+    case "g":
+      return { bytes: Math.round(n * 1024 * 1024 * 1024) };
+    default:
+      return { bytes: Math.round(n) };
+  }
 }
 function fail(message) {
   console.error(`decimen: ${message}`);
@@ -10258,16 +10501,26 @@ try {
     }
     const ecc = (values.ecc ?? SEND_DEFAULTS.ecc).toUpperCase();
     if (!["L", "M", "Q", "H"].includes(ecc)) fail("--ecc must be L, M, Q or H");
+    const fps = num(values.fps, SEND_DEFAULTS.fps, "fps");
+    const cycles = num(values.cycles, SEND_DEFAULTS.cycles, "cycles");
+    const grid = num(values.grid, SEND_DEFAULTS.grid, "grid");
+    const frameBytes = num(values["frame-bytes"], SEND_DEFAULTS.frameBytes, "frame-bytes");
+    let split;
+    if (values.split !== void 0) {
+      const parsed = parseSplit(values.split);
+      split = parsed.bytes ?? autoSplitBytes(parsed.seconds, frameBytes, fps, cycles, grid);
+    }
     await send({
       input,
       out: values.out,
       format,
       ecc,
-      fps: num(values.fps, SEND_DEFAULTS.fps, "fps"),
+      split,
+      fps,
       scale: num(values.scale, SEND_DEFAULTS.scale, "scale"),
-      cycles: num(values.cycles, SEND_DEFAULTS.cycles, "cycles"),
-      grid: num(values.grid, SEND_DEFAULTS.grid, "grid"),
-      frameBytes: num(values["frame-bytes"], SEND_DEFAULTS.frameBytes, "frame-bytes"),
+      cycles,
+      grid,
+      frameBytes,
       quiet
     });
   } else if (command === "receive") {
@@ -10298,8 +10551,12 @@ try {
     if (!quiet) {
       console.error(`received  ${result.name} (${result.type}), ${result.size} B`);
       console.error(`          SHA-256 verified, ${result.framesUsed} usable frames of ${result.framesSeen} read`);
+      if (result.part && !result.joined) {
+        const missing = result.part.total - result.part.have;
+        console.error(`part      ${result.part.index} of ${result.part.total}; ${missing} still to come`);
+      }
     }
-    console.log(result.path);
+    console.log(result.joined ?? result.path);
     stop?.();
   } else {
     fail(`unknown command "${command}" \u2014 expected play, send, receive or doctor`);
