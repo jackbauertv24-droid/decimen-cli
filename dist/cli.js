@@ -9783,7 +9783,7 @@ async function doctor() {
   console.log("");
   console.log("decimen doctor");
   console.log("");
-  line("cli", `${"1.0.1"}  build ${"ce7c122"} (${"2026-09-15"})`);
+  line("cli", `${"1.0.1"}  build ${"9d171f9"} (${"2026-09-15"})`);
   line("node", `${process.version}  ${process.platform} ${process.arch}`);
   line("wire format", `v${WIRE_VERSION}`);
   line("startup", `${Math.round(process.uptime() * 1e3)} ms from process start to here`);
@@ -9856,7 +9856,8 @@ async function doctor() {
     console.log("");
     console.log("  If a real run still feels slow to start, the delay is npm fetching the");
     console.log("  package, not this tool. Install it once instead:");
-    console.log("    npm install -g https://github.com/jackbauertv24-droid/decimen-cli/releases/download/v1.0.0/decimen-cli-1.0.0.tgz");
+    const v = "1.0.1";
+    console.log(`    npm install -g https://github.com/jackbauertv24-droid/decimen-cli/releases/download/v${v}/decimen-cli-${v}.tgz`);
   } else {
     console.log(`  ${failures} check${failures === 1 ? "" : "s"} failed \u2014 this install is not working.`);
   }
@@ -9924,7 +9925,7 @@ var { values, positionals } = parseArgs({
   strict: true
 });
 if (values.version) {
-  console.log(`decimen-cli ${"1.0.1"}  build ${"ce7c122"} (${"2026-09-15"})  wire v3`);
+  console.log(`decimen-cli ${"1.0.1"}  build ${"9d171f9"} (${"2026-09-15"})  wire v3`);
   process.exit(0);
 }
 var [command, ...rest] = positionals;
