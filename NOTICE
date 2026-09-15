@@ -1,0 +1,49 @@
+decimen-cli
+Copyright (c) 2026 the decimen-cli contributors
+
+Licensed under the GNU Affero General Public License, version 3 or (at your
+option) any later version (AGPL-3.0-or-later). See LICENSE for the full text.
+
+===============================================================================
+Third-party components
+===============================================================================
+
+This project is a command-line front end. Every byte that goes on the wire is
+produced and consumed by code from the upstream Decimen project, vendored
+unmodified under vendor/.
+
+Decimen Optical Transfer
+  Copyright (c) 2026 Evan Crawley (Bash Alarmist)
+  https://github.com/bashalarmistalt/decimen-optical-transfer
+  AGPL-3.0-or-later. Vendored at vendor/shared/ and vendor/send/, with the
+  upstream LICENSE and NOTICE preserved at vendor/LICENSE and vendor/NOTICE.
+  Portions contributed by Steve Dakh under the MIT License; see vendor/NOTICE.
+
+decimen-codec
+  Copyright (c) 2026 Evan Crawley (Bash Alarmist)
+  https://github.com/bashalarmistalt/decimen-codec
+  AGPL-3.0-or-later. The prebuilt WebAssembly QR reader and its Emscripten
+  glue are vendored at vendor/decimen-codec/, taken from the upstream
+  decimen-optical-transfer tree. See vendor/decimen-codec/NOTICE.md.
+
+zxing-cpp
+  Copyright (c) the zxing-cpp authors
+  Apache License 2.0. Compiled into decimen_codec.wasm as a reader-only,
+  QR-only build. Full text at vendor/decimen-codec/LICENSE.zxing-cpp.
+
+node-qrcode
+  Copyright (c) 2012 Ryan Day, (c) 2015 Vincenzo Greco
+  MIT License. Bundled into dist/cli.js; used for QR symbol generation.
+
+pngjs
+  Copyright (c) 2015 Luke Page and contributors
+  MIT License. Bundled into dist/cli.js; used to decode PNG frames.
+
+===============================================================================
+AGPL note
+===============================================================================
+
+Because the vendored encoder and decoder are AGPL-3.0-or-later, this entire
+work is distributed under those terms. If you modify it and make it available
+to users over a network, the AGPL requires you to offer them the corresponding
+source of your modified version.

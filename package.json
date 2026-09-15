@@ -1,0 +1,26 @@
+{
+  "name": "decimen-cli",
+  "version": "1.0.0",
+  "description": "Optical file transfer from the terminal: send a file as an animated QR stream that decimen.app can read off the screen, and receive one back.",
+  "type": "module",
+  "bin": { "decimen": "dist/cli.js" },
+  "files": ["dist", "vendor", "src", "README.md", "LICENSE", "NOTICE"],
+  "engines": { "node": ">=20" },
+  "license": "AGPL-3.0-or-later",
+  "repository": { "type": "git", "url": "git+https://github.com/jackbauertv24-droid/decimen-cli.git" },
+  "keywords": ["qr", "optical", "air-gap", "file-transfer", "fountain-code", "decimen", "offline"],
+  "scripts": {
+    "build": "node build.mjs",
+    "test": "node --test test/*.test.mjs",
+    "typecheck": "tsc"
+  },
+  "devDependencies": {
+    "@types/node": "^24.0.0",
+    "@types/pngjs": "^6.0.5",
+    "@types/qrcode": "^1.5.5",
+    "esbuild": "^0.25.0",
+    "pngjs": "^7.0.0",
+    "qrcode": "^1.5.4",
+    "typescript": "^5.5.0"
+  }
+}
