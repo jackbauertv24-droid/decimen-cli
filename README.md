@@ -103,7 +103,7 @@ the package, which is what the release tarball below is for.
 
 ```sh
 decimen --version
-# decimen-cli 1.0.0  build bb464d1 (2026-09-15)  wire v3
+# decimen-cli 1.0.3  build be18fbe (2026-09-15)  wire v3
 ```
 
 The build hash is baked in at bundle time and names the source commit the
